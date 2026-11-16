@@ -1,0 +1,19 @@
+{
+  "name": "open25-dm32-classic-cps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "python3 tools/prepare_tests.py && node --test tests/*.test.mjs",
+    "start": "python3 tools/serve.py",
+    "test:browser": "playwright test",
+    "build": "python3 tools/build.py",
+    "prepare:tests": "python3 tools/prepare_tests.py --fetch",
+    "verify": "python3 tools/verify_release.py",
+    "package": "python3 tools/package.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
+  },
+  "license": "MIT"
+}

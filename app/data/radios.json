@@ -1,0 +1,30 @@
+{
+  "radios": [
+    {
+      "id": "dm32",
+      "name": "Baofeng DM-32UV \u00b7 Classic",
+      "codeplug": {
+        "base": 7340032,
+        "end": 15728640,
+        "names": [
+          "DM-32UV",
+          "DM-32",
+          "dm32"
+        ],
+        "transports": [
+          "cps-serial"
+        ]
+      },
+      "bands_hz": [
+        [
+          136000000,
+          174000000
+        ],
+        [
+          400000000,
+          480000000
+        ]
+      ]
+    }
+  ]
+}
