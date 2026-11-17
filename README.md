@@ -1,14 +1,18 @@
 # Open25-DM32 Classic CPS
 
-**Classic r9 and later use RFKV programming only.** Update firmware and CPS
-together. Earlier Classic programming files and browser drafts are unsupported;
+**Classic CPS supports Open25-DM32 Classic firmware R9 and newer.** These
+versions use RFKV programming only. Update firmware and CPS together. Earlier
+Classic programming files and browser drafts are unsupported;
 create new programming after the update. This release has no legacy-format
 reader, writer or automatic conversion path. Full-radio recovery remains a
 separate flasher operation.
 
 A standalone browser codeplug editor for **Open25-DM32 Classic** on the
 Baofeng DM-32UV. Live at https://kd8zmm.com/open25-dm32/classic-cps/.
-Next CPS remains separately hosted at `/open25-dm32/cps/`.
+Next CPS remains separately hosted at `/open25-dm32/cps/`. Firmware installation
+and recovery use [Flasher v3](https://kd8zmm.com/open25-dm32/v3/firmware.html).
+The retired v1/v2 flasher entry URLs redirect to v3 and are not listed on the
+tools homepage.
 
 This edition uses RadioFoundry revision `9e1f7209` directly: safe base channel
 records, mode/system records in RFKV and upstream raw CPS/CPS_FAST. Noncanonical
