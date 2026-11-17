@@ -77,7 +77,8 @@ and verifies the static app, then writes only the 54 reviewed live files under
 it. This command never uploads or deploys anything. Site administration and SSH
 configuration are maintained separately from the public source.
 
-The public source repository is intended to be named `Open25-DM32-Classic-CPS`.
-This preparation does not create a GitHub repository or publish a release.
+Source code is published in
+[Open25-DM32-Classic-CPS](https://github.com/tylerwatt12/Open25-DM32-Classic-CPS).
+Source publication and local packaging do not deploy or change the live site.
 The original MIT license, upstream author list and source hash inventory remain
 in LICENSE, UPSTREAM-AUTHORS and UPSTREAM.json.
