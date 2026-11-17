@@ -1,8 +1,8 @@
 {
-  "release": "Classic r10 RX-only CPS",
+  "release": "Classic r11 P25 capability CPS",
   "url": "https://kd8zmm.com/open25-dm32/classic-cps/",
-  "source_owner_commit": "70b5cae80b111ef18252cefc84aeae683178446a",
-  "firmware_commit": "b885d5da77c9d41fb7d54d344f2568493846a36d",
+  "source_owner_commit": "ba2117af255ba6d18d755bf7a96f0a0bcdcd83ba",
+  "firmware_commit": "6dc8214949a521f07d9f9816040329d6f7294c16",
   "files_sha256": {
     "app/LICENSE": "61f1ae1fd28a8b2b524326dc2bd4e4cbb16cad1b9d2fa7c708a191443ee107ba",
     "app/UPSTREAM-AUTHORS": "1dceb707e7527661d6619851dc94c9f2c522206ef81aef867e0c7344ae7b1809",
@@ -10,8 +10,8 @@
     "app/classic.js": "f5ce8b53ab8ba1cee2ba1f4c622129c9a358e2ef397a035864c4b291bd96dcac",
     "app/data/radios.json": "eb0464f2624671ab5971a57d2726131da1638ce1f2e7c8d702c928a826fd9b1e",
     "app/data/releases.json": "cd27a311547cb133fd80fc525818d4495f01a03f2a52c99c203034f0d6429baa",
-    "app/data/site.json": "b906e474a79ce0daf9dc47f9563dfc288265901fcd6414c8f0e07954135f13c1",
-    "app/index.html": "08e6ef32cb81e44036b7c15caffa424ea42da6ab755957f8c1d7c9299809f12a",
+    "app/data/site.json": "2ff5a26f9b93e0ae9cd6ed54e52e70c5693a94e3900d6a5c8e6f99c24a0fa458",
+    "app/index.html": "4f559d35182e0e73559706acaccf749d48e5a8244739ad9bb3881b27d503acb2",
     "app/static/css/site.css": "6121b4c6b37a002a579e842b393f81b12991765ed4701c584b28e28c728f1f1b",
     "app/static/css/tokens.css": "d430af6129792e63894ec4c5331226984b0cdfb65910b832552cc7dd02e56ea1",
     "app/static/img/classic.svg": "49bad8ae455589c87430f492a939f603a1ed035a2c00b489d80babb2f492deab",

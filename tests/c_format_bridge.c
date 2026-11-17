@@ -5,11 +5,20 @@
 #include "board.h"
 #include "codeplug/codeplug.h"
 #include "p25/p25_codeplug.h"
-const board_t board={.power_count=9};
+#include "debuglink/debuglink.c"
+const board_t board={.name="DM-32UV",.power_count=9};
+uint32_t hal_millis(void){return 0;}
 static void hex(const uint8_t *p){for(unsigned i=0;i<56;i++)printf("%02x",p[i]);}
 int main(void){
  char action;unsigned rx,tx,tg,id,only,mode,bw;char encoded[113];
  while(scanf(" %c",&action)==1){
+  if(action=='F'){
+   uint8_t response[DL_REPLY_MAX];
+   size_t n=cmd_version(response,sizeof response);
+   if(n<1||response[0]!=DL_ST_OK)return 3;
+   if(fwrite(response+1,1,n-1,stdout)!=n-1)return 3;
+   continue;
+  }
   uint8_t bytes[56];channel_t c={0},back; int input_ok=-1;
   if(action=='V'){
    unsigned own,mode_id,radio_id;

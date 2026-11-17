@@ -89,8 +89,8 @@ npm run test:browser
 npm start
 ```
 
-`npm run prepare:tests` fetches published Classic r10 source at
-`b885d5da77c9d41fb7d54d344f2568493846a36d` into ignored `build/classic-source`
+`npm run prepare:tests` fetches Classic r11 source at
+`6dc8214949a521f07d9f9816040329d6f7294c16` into ignored `build/classic-source`
 and prepares the real host simulator and C encoder/decoder. Use Node22+,
 Python3.10+, Git, Make and a host C compiler; the C cross-check is tested with
 clang on macOS. No target compiler is needed for the CPS tests. Alternatively
@@ -98,6 +98,10 @@ set `OPEN25_CLASSIC_SOURCE` to an already prepared matching RFKV-only firmware
 checkout. An old r7/r8 source checkout cannot validate this programming format.
 Host tests exercise all usable TX NACs, validation limits, CSV/BIN round trips,
 unchanged FM/DMR bytes, DMR reference isolation and simulated serial writes.
+The P25 capability regression compiles the firmware's real VERSION handler and
+shared feature list, then passes its response through the CPS parser and channel
+form/table mode choices with no existing P25 channels. The pin above includes the r11 fix for issue #27; r10
+reproduces the missing capability failure.
 Browser tests use installed Chrome (or install Chrome through Playwright).
 `CPS_URL` selects a hosted deployment for the same browser checks; `#sim` uses
 only a browser-local simulated radio. No test flashes firmware or keys RF.

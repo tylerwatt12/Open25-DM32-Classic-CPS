@@ -10,8 +10,27 @@ import {encodeConv,decodeConv,encodeTsys,decodeTsys,p25System} from '../app/stat
 import {DEVELOPMENT} from '../app/static/js/codeplug/development.js';
 import {CpsSerial,writeRanges} from '../app/static/js/codeplug/transport.js';
 import {FakeCpsRadio} from '../app/static/js/codeplug/fakecps.js';
+import {parseKv} from '../app/static/js/flasher/link.js';
 const p25=(m,name='P25')=>{const c=newChannel({name,rxHz:446050000,txHz:446050000});m.channels.push(c);setKind(m,c,2);c.params.talkgroup=1;c.dmrId=101;return c};
 const legacy=(fields={})=>{const m=empty();m.channels.push(newChannel({name:'FM'}),newChannel({name:'DMR',mode:'dmr'}),newChannel({name:'Old P25'}));const image=encode(m),r=image.bytes.subarray(channelAddr(3),channelAddr(3)+CH_SIZE);r[0x18]=0xA5;r[0x2B]=0x93;r[0x2C]=0xD2;r[0x2E]=1;r[0x2F]=0;r[0x26]|=0x80;r.set([0,0,101],0x27);for(const [k,v]of Object.entries(fields))r[Number(k)]=v;return image};
+test('actual Classic firmware VERSION offers P25 in a codeplug with no existing P25 channels',()=>{
+ const run=spawnSync('build/c-format-bridge',[],{input:'F\n',encoding:'utf8'});
+ assert.equal(run.status,0,run.stderr);
+ const version=parseKv(run.stdout);
+ assert.equal(version.codeplug,'rfkv1');assert.equal(version.codeplug_chain,'1');
+ const features=version.features?.split(',')??[];
+ assert.equal(features.filter(f=>f==='P25').length,1,run.stdout);
+ assert.ok(!features.includes('P25_TRUNK'));
+ for(const withFmDmr of [false,true]){
+  const m=empty();if(withFmDmr)m.channels.push(newChannel({name:'FM'}),newChannel({name:'DMR',mode:'dmr'}));
+  const row=newChannel(),form=channelForm(m,k=>k,{features:version.features}).find(f=>f.key==='mode');
+  const grid=columns('channels',m,k=>k,{features:version.features}).find(f=>f.key==='mode');
+  for(const field of [form,grid]){
+   const options=field.options(row);assert.ok(options.some(([value,label])=>value==='k2'&&label==='P25'));
+   assert.ok(!options.some(([value])=>value==='k3'));
+  }
+ }
+});
 test('all usable explicit TX NACs preserve their presence including000 andequalRX',()=>{for(let tx=0;tx<=0xFFF;tx++){if(tx===0xF7E||tx===0xF7F)continue;const p={squelch:0,rxNac:0x293,txNac:tx,talkgroup:65535,mixed:false,txEncryption:0,ignoreClear:false,keySlot:0};assert.deepEqual(decodeConv(encodeConv(p)),p);}assert.equal(decodeConv(encodeConv({squelch:0,rxNac:0x293,txNac:null})).txNac,null);});
 test('retired Classic A5 D/E programming is rejected without altering any byte',async()=>{const {imageFrom}=await import('../app/static/js/editor/files.js');for(const fields of [{},{0x2C:0xE2,0x22:0,0x23:0},{0x2C:0xE2,0x22:0x93,0x23:2}]){const image=legacy(fields),before=image.bytes.slice();assert.throws(()=>imageFrom(image.bytes),e=>e.code==='rfkv_required');assert.deepEqual(image.bytes,before)}});
 test('noncanonical base-record discriminators are rejected before they can become FM',async()=>{const {imageFrom}=await import('../app/static/js/editor/files.js');for(const marker of [0xA0,0xA5,0xA6,0xA7,0xC0]){const image=legacy({0x18:marker}),before=image.bytes.slice();assert.throws(()=>imageFrom(image.bytes),e=>e.code==='rfkv_required');assert.deepEqual(image.bytes,before)}});
