@@ -67,5 +67,5 @@
     "tests/stock_baofeng.test.mjs": "1a8f1c717cd50397bcb1662dfefc2d7a6cf450e82a6c65fc194a6bca32e3330e",
     "tests/qdmr.test.mjs": "32e25c2ecddf0a282f3b2a324ba87dc8826ac362b549faf26d00e0c5f51b8a91"
   },
-  "local_changes": "Edition identity/storage; one-time Classic A5 import; appended P25 option fields and generic development records; RFKV continuations; literal TX NAC presence; spreadsheet interactions. See FORMAT.md. Next implementation is not a source input."
+  "local_changes": "Edition identity/storage; appended P25 option fields and generic development records; RFKV continuations; literal TX NAC presence; spreadsheet interactions. See FORMAT.md. Next implementation is not a source input. Classic r10 outside-amateur-band RX-only editing defaults and explicit TX confirmation."
 }

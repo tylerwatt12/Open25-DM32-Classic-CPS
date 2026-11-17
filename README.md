@@ -69,6 +69,15 @@ channel formats are preserved in an unchanged BIN, flagged, and blocked from
 radio writes until corrected. Drafts stay in this browser, separate from Next.
 Contact downloads use RadioID only when requested; no codeplug is uploaded.
 
+Classic r10 adds the matching on-radio default and confirmation. In this CPS,
+new and copied channels outside 144–148 or 420–450 MHz start RX Only. Changing
+the actual TX frequency outside those bands also selects RX Only. Turning it
+off requires an explicit Enable TX confirmation; cancel keeps the whole edit
+unapplied. Existing saved/imported programming is kept, and the radio's transmit
+checks still apply; the existing P25 transmit-band restriction is unchanged.
+The effective TX frequency uses RX for talkaround or a blank TX frequency.
+There is no new stored approval flag or prompt on every PTT press.
+
 ## Development and validation
 
 ```sh
@@ -80,8 +89,8 @@ npm run test:browser
 npm start
 ```
 
-`npm run prepare:tests` fetches published Classic r9 source at
-`f3794c357ca22652efffe5050ca67745106d7c0f` into ignored `build/classic-source`
+`npm run prepare:tests` fetches published Classic r10 source at
+`b885d5da77c9d41fb7d54d344f2568493846a36d` into ignored `build/classic-source`
 and prepares the real host simulator and C encoder/decoder. Use Node22+,
 Python3.10+, Git, Make and a host C compiler; the C cross-check is tested with
 clang on macOS. No target compiler is needed for the CPS tests. Alternatively

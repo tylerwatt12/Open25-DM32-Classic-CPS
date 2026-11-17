@@ -27,7 +27,7 @@ page='''<!doctype html>
 </div></header>
 <main id="main"><section class="wrap section page-head compact">
 <h1>Open25-DM32 Classic CPS</h1><p class="lead">Program FM, DMR and conventional P25 channels for Classic.</p>
-<p class="edition-note">For <strong>Open25-DM32 Classic r9 or later</strong> on the DM-32UV. Recreate earlier programming after updating. For Next firmware, use <a href="../cps/">Next CPS</a>.</p>
+<p class="edition-note">For <strong>Open25-DM32 Classic r9 or later</strong> on the DM-32UV. Matches the r10 RX-only editing defaults. Recreate earlier programming after updating. For Next firmware, use <a href="../cps/">Next CPS</a>.</p>
 </section><section class="wrap section editor-section">
 <div id="editor" class="editor"><p class="muted">Loading editor…</p></div><noscript>Enable JavaScript to use the editor.</noscript>
 </section></main>

@@ -69,8 +69,13 @@ const recordField = (r, key) => {const fields=kindMod(r)?.recordFields;return !r
 // Frequencies of its own: a trunked kind's are its system's
 const ownFreqs = (r) => !r.kind || kindMod(r)?.ownFreqs !== false;
 // Receive only: for a channel of a kind, its tag's transmit allowed turned round (the record is receive only)
-const rxOnlyGet = (r) => (r.kind ? !r.tagTx : r.rxOnly);
-const rxOnlySet = (r, v) => (r.kind ? (r.tagTx = !v) : (r.rxOnly = !!v));
+export const rxOnlyGet = (r) => (r.kind ? !r.tagTx : r.rxOnly);
+export const rxOnlySet = (r, v) => (r.kind ? (r.tagTx = !v) : (r.rxOnly = !!v));
+// Edition policy at editing boundaries only; opening/importing never changes saved intent.
+export const CLASSIC_TX_GUARD = true;
+export const effectiveTx = c => c.dmo || !c.txHz ? c.rxHz : c.txHz;
+export const outsideAmateur = c => {const hz=effectiveTx(c);return !(hz>=144e6&&hz<=148e6||hz>=420e6&&hz<=450e6)};
+export function txDefault(beforeHz,c,fresh=false){if(CLASSIC_TX_GUARD&&outsideAmateur(c)&&(fresh||beforeHz!==effectiveTx(c)))rxOnlySet(c,true)}
 
 const tone = (t) => (r, k, v) => {
 	const s = parseTone(v);
@@ -274,7 +279,9 @@ export function systemOptions(m, t, type, current) {
 }
 
 // features: the connected radio's (null: none), which says the kinds a channel may be made
-export function channelForm(m, t, { features = null,keyMask=null } = {}) {
+export function channelForm(m, t, { features = null,keyMask=null,onRxOnlyOff=()=>{} } = {}) {
+ let priorTx;
+ const defaultRxOnly=CLASSIC_TX_GUARD?(work,value,event)=>{if(event?.type==='input')return false;const rx=parseFreq(value('rxHz')),raw=value('txHz'),tx=raw===''?0:parseFreq(raw);if(rx==null||tx==null)return false;const c={...work,rxHz:rx,txHz:tx,dmo:value('dmo')},hz=effectiveTx(c),changed=priorTx!=null&&hz!==priorTx;priorTx=hz;return changed&&outsideAmateur(c)}:null;
 	const sel = (key, label, options, extra = {}) => ({ key, label: t(label), type: "select", options, ...extra });
 	const chk = (key, label) => ({ key, label: t(label), type: "bool" });
 	const txt = (key, label, parse, format) => ({ key, label: t(label), type: "text", parse, format });
@@ -327,7 +334,7 @@ export function channelForm(m, t, { features = null,keyMask=null } = {}) {
 		} },
 		txt("tot", "editor.col.tot", tot(t), (v) => (v ? String(v) : t("editor.tot.default"))),
 		// a receive-only band makes the channel RX only on save (rxFreq): the box shows it as the RX frequency is typed
-		{ ...chk("rxOnly", "editor.col.rx_only"), implied: listening, get: rxOnlyGet, set: rxOnlySet },
+		{ ...chk("rxOnly", "editor.col.rx_only"), implied: listening,defaultWhen:defaultRxOnly, get: rxOnlyGet, set:(r,v)=>{if(rxOnlyGet(r)&&!v)onRxOnlyOff();rxOnlySet(r,v)} },
 		{ group: t("editor.form.mode_params"), show: (r) => !!r.kind },
 		...kindFields,
 		fm({ group: t("editor.form.analog") }),
@@ -434,8 +441,8 @@ export function formDialog(title, fields, record, t, onSave) {
 		} else body.append(field(f));
 	}
 	const byKey = (k) => rows.find((r) => r.f.key === k);
-	const value = (k) => byKey(k).input.value;
-	const sync = () => {
+	const value = (k) => {const r=byKey(k);return r.f.type==='bool'?r.input.checked:r.input.value};
+	const sync = (event) => {
 		for (const { f, input, row, label, tools } of rows) {
 			if (f.type === "pair") {
 				for (const b of tools) b.disabled = !!f.disabled?.(work, value);
@@ -461,6 +468,7 @@ export function formDialog(title, fields, record, t, onSave) {
 				if (on) input.checked = true;
 				input.disabled = on;
 			}
+   if(f.defaultWhen?.(work,value,event))input.checked=true;
 			if (f.type === "bool") (f.set ? f.set(work, input.checked) : (work[f.key] = input.checked));
 			if (f.show) row.hidden = !f.show(work);
 			if (typeof f.label === "function") label.textContent = f.label(work);

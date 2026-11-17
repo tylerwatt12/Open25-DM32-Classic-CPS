@@ -772,5 +772,8 @@
   "editor.problem.p25_site_capacity": "This radio supports at most {max} sites across all systems; this file contains {count}.",
   "editor.problem.p25_control_capacity": "Site group {group} has {count} control channels; this radio supports at most {max} per site.",
   "editor.err.rfkv_required": "This file uses retired Open25 programming records. Create new programming with Classic r9 or later; this CPS does not convert old programming.",
-  "editor.problem.p25_tx_identity": "For transmit, choose a nonzero talkgroup and a nonzero channel, P25 mode or radio ID."
+  "editor.problem.p25_tx_identity": "For transmit, choose a nonzero talkgroup and a nonzero channel, P25 mode or radio ID.",
+  "editor.tx_outside": "Allow PTT to transmit on {frequencies}? Outside amateur bands.",
+  "editor.enable_tx": "Enable TX",
+  "editor.keep_rx_only": "Keep RX-only"
 }

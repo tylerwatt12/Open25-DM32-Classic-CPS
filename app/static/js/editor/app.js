@@ -18,9 +18,10 @@ import { convert as convertDb, readHeader as dbHeader } from "../codeplug/iddb.j
 import { convertIddb, iddbEnd } from "../codeplug/sources/output.js";
 import { FakeCpsRadio } from "../codeplug/fakecps.js";
 import { Grid } from "./grid.js";
+import {mhz} from '../codeplug/fields.js';
 import {idenDialog} from "./developmentview.js";
 import { History } from "./undo.js";
-import { bulkColumns, columns, channelForm, formDialog, membersDialog, refLabel, parseAreaKey } from "./views.js";
+import { bulkColumns, columns, channelForm, formDialog, membersDialog, refLabel, parseAreaKey,CLASSIC_TX_GUARD,effectiveTx,outsideAmateur,txDefault,rxOnlyGet } from "./views.js";
 import { systemsTab, systemsShown, modeSettingsPart } from "./modesview.js";
 import { syncModes, countSecrets, withoutSecrets } from "../codeplug/channelmodes.js";
 import { openFile, saveBytes, tftpBytes, datedName, FileError, imageFrom, saveDraft, loadDraft, clearDraft } from "./files.js";
@@ -82,6 +83,14 @@ function change(label, fn) {
 	refresh();
 	draftSoon();
 	return true;
+}
+
+// Every edit remains staged until the existing confirmation accepts the complete change.
+function channelChange(label,enable,commit){
+ const go=()=>change(label,commit);
+ if(!CLASSIC_TX_GUARD||!enable.length)return go();
+ const freqs=[...new Set(enable.map(effectiveTx))],shown=freqs.slice(0,3).map(mhz).join(', ')+(freqs.length>3?'…':'')+' MHz';
+ confirmDialog(t('editor.tx_outside',{frequencies:shown}),t('editor.enable_tx'),go,{cancel:t('editor.keep_rx_only'),primary:false});
 }
 
 let draftTimer = null;
@@ -191,13 +200,14 @@ function renderView(p) {
 	const g = new Grid({
 		columns: columns(tab, S.model, t,{features:features(),keyMask:S.conn?.transport.keyMask}), rows: S.model[tab], t, empty: t(`editor.empty.${tab}`),
         onChange:(row,col,value)=>{
-            const draft={...row,params:row.params?{...row.params}:row.params};const error=col.set(draft,value);if(error)return error;
+            const draft={...row,params:row.params?{...row.params}:row.params},beforeHz=effectiveTx(row),wasRxOnly=rxOnlyGet(row);const error=col.set(draft,value);if(error)return error;
+            if(tab==='channels')txDefault(beforeHz,draft);
             const candidate={...S.model,[tab]:S.model[tab].map(r=>r===row?draft:r)};
             const bad=validate(candidate,{features:features(),keyMask:S.conn?.transport.keyMask}).find(p=>p.level==='error'&&p.item===draft);if(bad)return t('editor.problem.'+bad.code,bad.params);
-            change(t('editor.undo.edit'),()=>Object.assign(row,draft));
+            channelChange(t('editor.undo.edit'),tab==='channels'&&col.key==='rxOnly'&&wasRxOnly&&!rxOnlyGet(draft)&&outsideAmateur(draft)?[draft]:[],()=>Object.assign(row,draft));
         },
         onPaste:(cells,origin)=>{
-            const visible=g.shown(),drafts=new Map(),added=[];let error=null;
+            const visible=g.shown(),drafts=new Map(),added=[],enable=new Set();let error=null;
             for(let i=0;i<cells.length&&!error;i++){
                 const current=visible[origin.row+i];let row=current?drafts.get(current):null;
                 if(!row){row=current?{...current,params:current.params?{...current.params}:current.params}:blank(tab);if(current)drafts.set(current,row);else added.push(row);}
@@ -208,12 +218,13 @@ function renderView(p) {
                     let value=text;
                     if(col.type==='select'){const option=col.options(row).find(([v,label])=>String(label).toLowerCase()===text.trim().toLowerCase());if(!option){error={error:'Choose a value from the list',row:origin.row+i,col:origin.col+j};break;}value=option[0];}
                     if(col.type==='bool'){if(/^(yes|true|1|✓)$/i.test(text))value=true;else if(/^(no|false|0|)$/i.test(text))value=false;else{error={error:'Choose Yes or No',row:origin.row+i,col:origin.col+j};break;}}
-                    const err=col.set(row,value);if(err){error={error:err,row:origin.row+i,col:origin.col+j};break;}
+                    const beforeHz=effectiveTx(row),wasRxOnly=rxOnlyGet(row),err=col.set(row,value);if(err){error={error:err,row:origin.row+i,col:origin.col+j};break;}
+                    if(tab==='channels'){txDefault(beforeHz,row);if(col.key==='rxOnly'&&wasRxOnly&&!rxOnlyGet(row))enable.add(row);}
                 }
             }
             if(!error){const candidate={...S.model,[tab]:[...S.model[tab].map(r=>drafts.get(r)??r),...added]};const changed=new Set([...drafts.values(),...added]);const bad=validate(candidate,{features:features(),keyMask:S.conn?.transport.keyMask}).find(p=>p.level==='error'&&changed.has(p.item));if(bad)error={error:t('editor.problem.'+bad.code,bad.params),row:origin.row,col:origin.col};}
             if(error){say(error.error,'bad');return error;}
-            change(t('editor.undo.edit'),()=>{for(const [original,draft]of drafts)Object.assign(original,draft);S.model[tab].push(...added);numberAll(S.model)});
+            channelChange(t('editor.undo.edit'),[...enable].filter(r=>!rxOnlyGet(r)&&outsideAmateur(r)),()=>{for(const [original,draft]of drafts)Object.assign(original,draft);S.model[tab].push(...added);numberAll(S.model)});
         },
 		onSelect: () => S.grid?.update(),
 		onOpen: ["channels","zones","rxLists","scanLists","idenSets"].includes(tab) ? (r) => openRecord(tab, r) : null,
@@ -260,7 +271,7 @@ function blank(tab) {
 		return `${base} ${i}`;
 	};
 	switch (tab) {
-	case "channels": return newChannel({ name: n(t("editor.new.channel")) });
+	case "channels": {const c=newChannel({ name: n(t("editor.new.channel")) });txDefault(null,c,true);return c;}
 	case "contacts": return newContact({ name: n(t("editor.new.contact")), id: 9 });
 	case "scanLists":return {number:null,name:n(t("editor.new.scan")),talkback:true,channels:[]};
  case "idenSets":return {number:null,name:n(t("editor.new.iden")),rows:Array.from({length:16},()=>({baseHz:0,stepHz:0,txOffsetHz:0}))};
@@ -288,6 +299,7 @@ function duplicate(tab, g) {
 		for (const r of src.slice(0, room)) {
 			const c = { ...r, number: null, name: (r.name + " +").slice(0, tab === "aprs" ? LIMITS.aprsName : LIMITS.name) };
 			for (const k of Object.keys(c)) if (Array.isArray(c[k])) c[k] = c[k].slice();
+   if(tab==='channels')txDefault(null,c,true);
 			S.model[tab].push(c);
 		}
 		if (tab !== "zones") assignNumbers(S.model[tab], TABLE_MAX[tab]);
@@ -362,19 +374,16 @@ function bulkSet(tab, g) {
 	dialog(t("editor.bulk_edit_n", { n: rows.length }), [h("label", {}, t("editor.field"), pickCol), slot, errs], t("editor.apply"), (close) => {
 		const c = cols[pickCol.selectedIndex];
 		const v = c.type === "select" ? input._opts[input.selectedIndex][0] : c.type === "bool" ? input.value === "1" : input.value;
-		let err = null;
-		change(t("editor.undo.edit"), () => {
-			for (const r of rows) {
-				err = c.set(r, v);
-				if (err) return false;
-			}
-		});
+		let err = null;const drafts=new Map(),enable=[];
+  for(const r of rows){const draft={...r,params:r.params?{...r.params}:r.params},wasRxOnly=rxOnlyGet(r);err=c.set(draft,v);if(err)break;if(tab==='channels'){txDefault(effectiveTx(r),draft);if(c.key==='rxOnly'&&wasRxOnly&&!rxOnlyGet(draft)&&outsideAmateur(draft))enable.push(draft);}drafts.set(r,draft);}
+  if(!err){const candidate={...S.model,[tab]:S.model[tab].map(r=>drafts.get(r)??r)},changed=new Set(drafts.values()),bad=validate(candidate,{features:features()}).find(p=>p.level==='error'&&changed.has(p.item));if(bad)err=t('editor.problem.'+bad.code,bad.params);}
 		if (err) {
 			errs.hidden = false;
 			errs.textContent = err;
 			return;
 		}
 		close();
+  channelChange(t('editor.undo.edit'),enable,()=>{for(const [r,draft]of drafts)Object.assign(r,draft)});
 	});
 }
 
@@ -382,11 +391,12 @@ function openRecord(tab, r) {
  if(tab==="idenSets")return idenDialog(r,t,rows=>change(t("editor.undo.edit"),()=>r.rows=rows));
  if(tab==="scanLists")return membersDialog(r.name,r.channels,S.model.channels,32,t,c=>`${c.number} · ${c.name}`,list=>change(t("editor.undo.edit"),()=>r.channels=list));
 	if (tab === "channels") {
+  let enableRequested=false;
 		// a channel of a kind keeps its stand-in record (channelmodes.js syncModes), whatever the form's hidden fields hold
-		formDialog(t("editor.channel_title", { name: r.name }), channelForm(S.model, t, { features: features(),keyMask:S.conn?.transport.keyMask }), r, t, (work) => change(t("editor.undo.edit"), () => {
+		formDialog(t("editor.channel_title", { name: r.name }), channelForm(S.model, t, { features: features(),keyMask:S.conn?.transport.keyMask,onRxOnlyOff:()=>enableRequested=true }), r, t, (work) => {const enable=enableRequested&&!rxOnlyGet(work)&&outsideAmateur(work);if(!enable)txDefault(effectiveTx(r),work);channelChange(t("editor.undo.edit"),enable?[work]:[], () => {
 			Object.assign(r, work);
 			syncModes(S.model);
-		}));
+		})});
 	} else if (tab === "zones") {
 		membersDialog(t("editor.zone_title", { name: r.name }), r.channels, [...S.model.channels].sort((a, b) => a.number - b.number), LIMITS.zoneChannels, t,
 			(c) => `${c.number} · ${c.name}`, (list) => change(t("editor.undo.edit"), () => (r.channels = list)));
