@@ -7,18 +7,23 @@
 import { h, t, ROOT, HOME, button, notice, download, progressBar, num as fmtNum, date as fmtDate } from "../flasher/dom.js";
 import { equal } from "../flasher/bytes.js";
 import { SerialStream, serialSupported, serialApi, RFOUNDRY_USB, browserErrorKey, knownRadioPort } from "../flasher/link.js";
-import { CodeplugImage, IDDB_HEADER, REGIONS } from "../codeplug/image.js";
+import { CodeplugImage, IDDB_HEADER, EDITOR_REGIONS } from "../codeplug/image.js";
 import { decode, encode, empty, remove, validate, newChannel, newContact, numberAll, assignNumbers } from "../codeplug/model.js";
 import { LIMITS, decodeGeneral } from "../codeplug/records.js";
 import { CpsSerial, TransportError, estimate, keepIdentity, IDENTITY, iddbRanges } from "../codeplug/transport.js";
 import { FastError } from "../codeplug/fastlink.js";
+import { areaForWrite, KEYS } from "../codeplug/kv.js";
+import { toSerial, CLICK_WAIT_MS } from "../flasher/netmode.js";
 import { convert as convertDb, readHeader as dbHeader } from "../codeplug/iddb.js";
 import { convertIddb, iddbEnd } from "../codeplug/sources/output.js";
 import { FakeCpsRadio } from "../codeplug/fakecps.js";
 import { Grid } from "./grid.js";
+import {idenDialog} from "./developmentview.js";
 import { History } from "./undo.js";
-import { bulkColumns, columns, channelForm, formDialog, membersDialog, refLabel } from "./views.js";
-import { openFile, saveBytes, tftpBytes, FileError, imageFrom, saveDraft, loadDraft, clearDraft } from "./files.js";
+import { bulkColumns, columns, channelForm, formDialog, membersDialog, refLabel, parseAreaKey } from "./views.js";
+import { systemsTab, systemsShown, modeSettingsPart } from "./modesview.js";
+import { syncModes, countSecrets, withoutSecrets } from "../codeplug/channelmodes.js";
+import { openFile, saveBytes, tftpBytes, datedName, FileError, imageFrom, saveDraft, loadDraft, clearDraft } from "./files.js";
 import { extensions } from "./extensions.js";
 import "./parts.js";
 import * as diag from "../diag.js";
@@ -26,8 +31,8 @@ import { initReporting, reportedLine } from "../report.js";
 import { updateFor } from "../flasher/version.js";
 
 const CABLES = [0x0403, 0x1A86, 0x10C4, 0x067B].map((usbVendorId) => ({ usbVendorId }));
-const TABS = ["radio", "channels", "zones", "contacts", "rxLists", "dtmfContacts", "aprs", "iddb", "problems"];
-const TABLE_MAX = { channels: LIMITS.channels, zones: LIMITS.zones, contacts: LIMITS.contacts, rxLists: LIMITS.rxLists, dtmfContacts: LIMITS.dtmfContacts, aprs: LIMITS.aprs };
+const TABS = ["radio", "channels", "zones", "contacts", "rxLists", "dtmfContacts", "aprs", "systems", "scanLists", "idenSets", "iddb", "problems"];
+const TABLE_MAX = { channels: LIMITS.channels, zones: LIMITS.zones, contacts: LIMITS.contacts, rxLists: LIMITS.rxLists, dtmfContacts: LIMITS.dtmfContacts, aprs: LIMITS.aprs,scanLists:16,idenSets:8 };
 
 const S = {
 	model: null,
@@ -109,7 +114,12 @@ function say(text, kind = "info", { report = null } = {}) {
 // --- Rendering ---
 
 function problems() {
-	return validate(S.model, { bands: S.conn?.radio?.bands_hz || null });
+	return validate(S.model, { bands: S.conn?.radio?.bands_hz || null, features: features() });
+}
+
+// The connected radio's firmware features (its probe), which say the channel modes it runs; null without a radio
+function features() {
+	return S.conn ? S.conn.probe?.features ?? "" : "FM,DMR,P25";
 }
 
 function refresh() {
@@ -119,9 +129,10 @@ function refresh() {
 	const counts = {
 		channels: S.model.channels.length, zones: S.model.zones.length, contacts: S.model.contacts.length,
 		rxLists: S.model.rxLists.length, dtmfContacts: S.model.dtmfContacts.length, aprs: S.model.aprs.length,
-		iddb: S.model.iddb?.count || 0, problems: p.length,
+		systems: S.model.systems?.length || 0, iddb: S.model.iddb?.count || 0, problems: p.length,
 	};
-	tabs.replaceChildren(...TABS.map((k) => {
+	// the Systems tab only where a mode that has systems is offered, or the codeplug has systems
+	tabs.replaceChildren(...TABS.filter((k) => (k !== "systems" || systemsShown(S.model, features())) && (!["scanLists","idenSets"].includes(k)||features()?.includes("P25_TRUNK")||S.model[k]?.length)).map((k) => {
 		const b = h("button", { type: "button", role: "tab", "aria-selected": String(S.tab === k), class: k === "problems" && errors ? "has-errors" : "",
 			onclick: () => show(k) }, t(`editor.tab.${k}`), k in counts && k !== "radio" ? h("span", { class: "ed-count" }, String(counts[k])) : null);
 		return b;
@@ -169,6 +180,7 @@ function renderView(p) {
 	const tab = S.tab;
 	if (tab === "radio") return view.replaceChildren(radioTab());
 	if (tab === "iddb") return view.replaceChildren(extensions.iddbTab(api()));
+	if(tab==="systems"){if(S.grid?.table==="systems"){S.grid.g.setRows(S.model.systems);S.grid.update();return;}const el=systemsTab(api(),features());if(el.grid)S.grid={table:"systems",g:el.grid,update:el.update};return view.replaceChildren(el); }
 	if (tab === "problems") return view.replaceChildren(problemsTab(p));
 	// a table: keep the grid (focus, sort, selection) when only its rows changed
 	if (S.grid && S.grid.table === tab) {
@@ -177,17 +189,34 @@ function renderView(p) {
 		return;
 	}
 	const g = new Grid({
-		columns: columns(tab, S.model, t), rows: S.model[tab], t, empty: t(`editor.empty.${tab}`),
-		onChange: (row, col, value) => {
-			let err = null;
-			change(t("editor.undo.edit"), () => {
-				err = col.set(row, value);
-				return err ? false : undefined;
-			});
-			return err;
-		},
+		columns: columns(tab, S.model, t,{features:features(),keyMask:S.conn?.transport.keyMask}), rows: S.model[tab], t, empty: t(`editor.empty.${tab}`),
+        onChange:(row,col,value)=>{
+            const draft={...row,params:row.params?{...row.params}:row.params};const error=col.set(draft,value);if(error)return error;
+            const candidate={...S.model,[tab]:S.model[tab].map(r=>r===row?draft:r)};
+            const bad=validate(candidate,{features:features(),keyMask:S.conn?.transport.keyMask}).find(p=>p.level==='error'&&p.item===draft);if(bad)return t('editor.problem.'+bad.code,bad.params);
+            change(t('editor.undo.edit'),()=>Object.assign(row,draft));
+        },
+        onPaste:(cells,origin)=>{
+            const visible=g.shown(),drafts=new Map(),added=[];let error=null;
+            for(let i=0;i<cells.length&&!error;i++){
+                const current=visible[origin.row+i];let row=current?drafts.get(current):null;
+                if(!row){row=current?{...current,params:current.params?{...current.params}:current.params}:blank(tab);if(current)drafts.set(current,row);else added.push(row);}
+                if(S.model[tab].length+added.length>TABLE_MAX[tab]){error={error:'Table is full',row:origin.row+i,col:origin.col};break;}
+                for(let j=0;j<cells[i].length;j++){
+                    const col=g.columns[origin.col+j];if(!col){error={error:'Paste extends past the last column',row:origin.row+i,col:origin.col+j};break;}
+                    const text=cells[i][j];if(g.locked(col,row)){if(!text||col.key==='number'||text===g.text(col,row))continue;error={error:'This field does not apply to the record',row:origin.row+i,col:origin.col+j};break;}
+                    let value=text;
+                    if(col.type==='select'){const option=col.options(row).find(([v,label])=>String(label).toLowerCase()===text.trim().toLowerCase());if(!option){error={error:'Choose a value from the list',row:origin.row+i,col:origin.col+j};break;}value=option[0];}
+                    if(col.type==='bool'){if(/^(yes|true|1|✓)$/i.test(text))value=true;else if(/^(no|false|0|)$/i.test(text))value=false;else{error={error:'Choose Yes or No',row:origin.row+i,col:origin.col+j};break;}}
+                    const err=col.set(row,value);if(err){error={error:err,row:origin.row+i,col:origin.col+j};break;}
+                }
+            }
+            if(!error){const candidate={...S.model,[tab]:[...S.model[tab].map(r=>drafts.get(r)??r),...added]};const changed=new Set([...drafts.values(),...added]);const bad=validate(candidate,{features:features(),keyMask:S.conn?.transport.keyMask}).find(p=>p.level==='error'&&changed.has(p.item));if(bad)error={error:t('editor.problem.'+bad.code,bad.params),row:origin.row,col:origin.col};}
+            if(error){say(error.error,'bad');return error;}
+            change(t('editor.undo.edit'),()=>{for(const [original,draft]of drafts)Object.assign(original,draft);S.model[tab].push(...added);numberAll(S.model)});
+        },
 		onSelect: () => S.grid?.update(),
-		onOpen: tab === "channels" || tab === "zones" || tab === "rxLists" ? (r) => openRecord(tab, r) : null,
+		onOpen: ["channels","zones","rxLists","scanLists","idenSets"].includes(tab) ? (r) => openRecord(tab, r) : null,
 	});
 	g.filter = S.filter[tab] || "";
 	g.render();
@@ -233,7 +262,9 @@ function blank(tab) {
 	switch (tab) {
 	case "channels": return newChannel({ name: n(t("editor.new.channel")) });
 	case "contacts": return newContact({ name: n(t("editor.new.contact")), id: 9 });
-	case "zones": return { name: n(t("editor.new.zone")), channels: [] };
+	case "scanLists":return {number:null,name:n(t("editor.new.scan")),talkback:true,channels:[]};
+ case "idenSets":return {number:null,name:n(t("editor.new.iden")),rows:Array.from({length:16},()=>({baseHz:0,stepHz:0,txOffsetHz:0}))};
+ case "zones": return { name: n(t("editor.new.zone")), channels: [] };
 	case "rxLists": return { number: null, name: n(t("editor.new.rx_list")), contacts: [] };
 	case "dtmfContacts": return { number: null, name: n(t("editor.new.dtmf")), code: "0" };
 	case "aprs": return { number: null, name: "APRS", ssid: 7, lat: 0, lon: 0, path1: "WIDE1-1", path2: "", symTable: "/", symCode: ">", comment: "", txHz: 0, baud300: false, useFixed: false, qsy: false, silent: false, ambiguity: 0 };
@@ -247,7 +278,7 @@ function addRecord(tab, g) {
 		if (tab !== "zones") assignNumbers(S.model[tab], TABLE_MAX[tab]);
 	});
 	g.focusRow(r);
-	if (tab === "zones" || tab === "rxLists") openRecord(tab, r);
+	if (["zones","rxLists","scanLists","idenSets"].includes(tab)) openRecord(tab,r);
 }
 
 function duplicate(tab, g) {
@@ -348,8 +379,14 @@ function bulkSet(tab, g) {
 }
 
 function openRecord(tab, r) {
+ if(tab==="idenSets")return idenDialog(r,t,rows=>change(t("editor.undo.edit"),()=>r.rows=rows));
+ if(tab==="scanLists")return membersDialog(r.name,r.channels,S.model.channels,32,t,c=>`${c.number} · ${c.name}`,list=>change(t("editor.undo.edit"),()=>r.channels=list));
 	if (tab === "channels") {
-		formDialog(t("editor.channel_title", { name: r.name }), channelForm(S.model, t), r, t, (work) => change(t("editor.undo.edit"), () => Object.assign(r, work)));
+		// a channel of a kind keeps its stand-in record (channelmodes.js syncModes), whatever the form's hidden fields hold
+		formDialog(t("editor.channel_title", { name: r.name }), channelForm(S.model, t, { features: features(),keyMask:S.conn?.transport.keyMask }), r, t, (work) => change(t("editor.undo.edit"), () => {
+			Object.assign(r, work);
+			syncModes(S.model);
+		}));
 	} else if (tab === "zones") {
 		membersDialog(t("editor.zone_title", { name: r.name }), r.channels, [...S.model.channels].sort((a, b) => a.number - b.number), LIMITS.zoneChannels, t,
 			(c) => `${c.number} · ${c.name}`, (list) => change(t("editor.undo.edit"), () => (r.channels = list)));
@@ -382,6 +419,20 @@ function radioTab() {
 		const n = Number(v.trim() || 0);
 		return Number.isInteger(n) && n >= lo && n <= hi ? { value: n } : { error: t("editor.err.range", { min: lo, max: hi }) };
 	};
+	// a number kept as a key of the settings area (kv.js KEYS): the row gives its range, empty is an absent key
+	const areaKey = (name) => (v) => parseAreaKey(KEYS.find((row) => row.name === name), v, t);
+	// a bool kept as a key of the settings area: Not set (an absent key, the radio keeps its own), On or Off
+	const onOff = (key, label) => {
+		const sel = h("select", { id: "g-" + key },
+			h("option", { value: "" }, t("editor.general.not_set")),
+			h("option", { value: "1" }, t("editor.general.on")),
+			h("option", { value: "0" }, t("editor.general.off")));
+		sel.value = g[key] == null ? "" : g[key] ? "1" : "0";
+		sel.addEventListener("change", () => change(t("editor.undo.edit"),
+			() => (S.model.general = { ...S.model.general, [key]: sel.value === "" ? null : sel.value === "1" })));
+		return h("div", { class: "form-row" }, h("label", { for: "g-" + key }, label), sel,
+			h("span", { class: "small muted" }, t("editor.general.tone_help")));
+	};
 	const parts = [
 		h("div", { class: "form-grid ed-radio-form" },
 			field("dmrId", t("editor.general.dmr_id"), 8, t("editor.general.dmr_id_help"), num(0, 0xFFFFFF)),
@@ -389,7 +440,14 @@ function radioTab() {
 			field("bootLine1", t("editor.general.boot1"), LIMITS.bootText, null, text(LIMITS.bootText)),
 			field("bootLine2", t("editor.general.boot2"), LIMITS.bootText, null, text(LIMITS.bootText)),
 			field("groupHang", t("editor.general.group_hang"), 3, t("editor.general.hang_help"), num(0, 255)),
-			field("privateHang", t("editor.general.private_hang"), 3, t("editor.general.hang_help"), num(0, 255))),
+			field("privateHang", t("editor.general.private_hang"), 3, t("editor.general.hang_help"), num(0, 255)),
+			field("arsServer", t("editor.general.ars_server"), 8, t("editor.general.ars_server_help"), areaKey("arsServer")),
+			field("ipGateway", t("editor.general.ip_gateway"), 8, t("editor.general.ip_gateway_help"), areaKey("ipGateway")),
+			onOff("callEndTone", t("editor.general.call_end_tone")),
+			onOff("totWarnTone", t("editor.general.tot_warn_tone")),
+			onOff("batteryTone", t("editor.general.battery_tone")),
+			onOff("txDenyTone", t("editor.general.tx_deny_tone")),
+			...modeSettingsPart(api(), features())),
 	];
 	if (S.conn) {
 		const p = S.conn.probe;
@@ -452,12 +510,26 @@ function saveFile(kind) {
 	const errors = problems().filter((p) => p.level === "error");
 	if (errors.length) return say(t("editor.err.fix_first", { n: errors.length }), "bad");
 	const img = encode(S.model);
+	// keys (channel-modes.md 8) go into a file only when the user turns them on for this export
+	const n = countSecrets(img.bytes);
+	if (!n) return saveImage(kind, img);
+	const box = h("input", { type: "checkbox", id: "keep-secrets" });
+	dialog(t("editor.secrets.title"), [h("p", {}, t("editor.secrets.text", { n })),
+		h("div", { class: "form-row form-check" }, h("label", { for: "keep-secrets" }, t("editor.secrets.include")), box)],
+	t("editor.save"), (close) => {
+		close();
+		if (!box.checked) withoutSecrets(img.bytes);
+		saveImage(kind, img);
+	});
+}
+
+function saveImage(kind, img) {
 	if (kind === "tftp") {
 		download("codeplug.bin", tftpBytes(img, iddbEnd(S.conn?.radio)));
 		say(t("editor.saved_tftp"), "info");
 		return;
 	}
-	download(`${S.fileName || "codeplug"}.bin`, saveBytes(img));
+	download(`${datedName(S.fileName)}.bin`, saveBytes(img));
 	S.dirty = false;
 	refresh();
 	draftSoon();
@@ -488,13 +560,17 @@ async function connect() {
 		// &git_time=N: a build of a commit from that time (Unix seconds)
 		const hash = location.hash;
 		S.fake = S.fake || new FakeCpsRadio({ board: "DM-32UV", base:0x700000,end:0xF00000, image: CodeplugImage.blank().bytes, foreign: hash === "#sim-foreign",
-			features: hash.startsWith("#sim-compact") ? "FM,DMR,P25,CPS_OPENFW,IDDB_COMPACT" : "FM,DMR,P25,CPS_OPENFW", release: hash.match(/[#&]release=([\w.]+)/)?.[1],
+			// #sim-modes: firmware that runs every channel mode the editor knows (modes.js)
+			features: hash.startsWith("#sim-compact") ? "FM,DMR,P25,IDDB_COMPACT" : hash.startsWith("#sim-modes") ? "FM,DMR,DMR_TRUNK,P25,P25_TRUNK" : "FM,DMR,P25", release: hash.match(/[#&]release=([\w.]+)/)?.[1],
 			gitTime: Number(hash.match(/[#&]git_time=(\d+)/)?.[1]) || 0 });
 		stream = S.fake.stream();
 	} else {
 		if (!serialSupported()) throw new TransportError("no_serial");
 		// one chooser for both links: the radio's own USB port, or a programming cable, told apart by the port's USB ID.
-		// A port granted before where RadioFoundry answers needs no chooser
+		// A port granted before where RadioFoundry answers needs no chooser. A radio in USB network mode is asked for
+		// its serial port first, where WebUSB reaches it (netmode.js); it goes back when it restarts. The wait is short:
+		// the chooser below must still open in this click
+		await toSerial({ http: false, ms: CLICK_WAIT_MS });
 		const known = await knownRadioPort([RFOUNDRY_USB, ...CABLES]);
 		let port = known?.port;
 		if (!port) {
@@ -503,6 +579,14 @@ async function connect() {
 			} catch (e) {
 				if (e?.name !== "NotFoundError") throw e;
 				say(t("editor.connect.none"), "warn");
+				// the message says a radio in network mode isn't listed: the radio's own page switches it where
+				// WebUSB couldn't (netmode.js). A tab, so from a click
+				const go = button(t("flash.net.switch"), async () => {
+					go.disabled = true;
+					const r = await toSerial();
+					say(t(r.back ? "flash.net.switched" : "flash.net.switch_unseen"), r.back ? "info" : "warn");
+				});
+				messages.firstChild?.append(h("p", {}, go), h("p", { class: "small" }, t("flash.net.not_secure")));
 				return null;
 			}
 		}
@@ -657,7 +741,7 @@ async function sameCodeplug(c, img) {
 	const now = await withProgress(t("editor.reading", { radio: c.radio.name }), (bar, signal) =>
 		c.transport.read({ iddb: false, signal, cache: img, progress: (n, total) => bar.set(n, total) }));
 	const at = (x, a, b) => x.bytes.subarray(a, Math.min(b, x.bytes.length));
-	return REGIONS.every(([a, b]) => equal(at(now, a, b), at(img, a, b)));
+	return EDITOR_REGIONS.every(([a, b]) => equal(at(now, a, b), at(img, a, b)));
 }
 
 function readSkippedIddb() {
@@ -786,7 +870,7 @@ async function offerUpdate(c) {
 	if (gains.length) body.push(h("p", {}, t("editor.update.gains")), h("ul", {}, ...gains.map((f) => h("li", {}, t(`editor.update.gain.${f}`)))));
 	dialog(t("editor.update.title"), body, t("editor.update.go"), async (close) => {
 		// the flasher's tab needs the port: this one lets go of it (opened first, in the click, so no popup blocker stops it)
-		window.open("https://kd8zmm.com/open25-dm32/v3/firmware.html", "_blank", "noopener");
+		window.open(`${HOME}flash/index.html#update`, "_blank", "noopener");
 		close();
 		if (S.conn === c) await dropConnection();
 	}, () => {}, { cancel: t("editor.update.later") });
@@ -827,6 +911,7 @@ async function planWrite() {
 		// the same codeplug with this radio's own name, ID and boot text kept, and what each would send
 		// (compared byte for byte: two plans can send the same number of bytes. The second is planned only when there
 		// is something to keep: each plan is a pass over every block's CRC)
+		areaForWrite(file.bytes, c.image.bytes, S.model.base?.bytes);
 		const kept = keepIdentity(file, c.image);
 		const differs = IDENTITY.some(([a, b]) => kept.bytes.subarray(a, b).some((x, i) => x !== file.bytes[a + i]));
 		const plans = { file: await c.transport.plan(file, c.image, { iddb }) };

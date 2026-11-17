@@ -6,8 +6,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { bulkColumns, channelForm, columns } from "../app/static/js/editor/views.js";
+import { bulkColumns, channelForm, columns, parseAreaKey } from "../app/static/js/editor/views.js";
 import { empty } from "../app/static/js/codeplug/model.js";
+import { KEYS } from "../app/static/js/codeplug/kv.js";
 import { Grid } from "../app/static/js/editor/grid.js";
 
 const t = (k) => (k === "editor.tot.default" ? "Radio Default" : k);
@@ -60,9 +61,9 @@ test("the channel table shows the mode the radio uses in a receive-only band", (
 		["editor.mode.air", "editor.mode.bcast", "FM", "DMR"]);
 });
 
-test("Bulk Edit sets no names or numbers, and has nothing to set on zones and RX lists", () => {
+test("Bulk Edit excludes names and numbers; zones expose scan membership and RX lists remain unchanged", () => {
 	const keys = (table) => bulkColumns(table, empty(), t).map((c) => c.key);
-	assert.deepEqual([keys("zones"), keys("rxLists")], [[], []]);
+	assert.deepEqual([keys("zones"), keys("rxLists")], [["scan"], []]);
 	assert.ok(keys("channels").includes("power"));
 	assert.ok(!keys("channels").includes("name") && !keys("contacts").includes("number"));
 	assert.ok(keys("contacts").includes("type"));
@@ -79,4 +80,13 @@ test("the table filter and sort take every column's text, numbers too", () => {
 	g.filter = "";
 	g.sort = { key: "number", dir: 1 };
 	assert.deepEqual(g.shown().map((r) => r.number), [3, 12]);
+});
+
+test("Radio tab ARS server and IP gateway: empty is an absent key, 0 is off", () => {
+	const typed = (s) => parseAreaKey(KEYS[0], s, (k, p) => `${k} ${p.min}-${p.max}`);
+	for (const s of ["", " ", null]) assert.deepEqual(typed(s), { value: null }, JSON.stringify(s));
+	assert.deepEqual(typed("0"), { value: 0 });
+	assert.deepEqual(typed(" 3100500 "), { value: 3100500 });
+	assert.deepEqual(typed("16776415"), { value: 16776415 });
+	for (const s of ["16776416", "-1", "1.5", "abc"]) assert.deepEqual(typed(s), { error: "editor.err.range 0-16776415" }, s);
 });

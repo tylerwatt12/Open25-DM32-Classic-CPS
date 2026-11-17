@@ -9,6 +9,7 @@ import { EE, FL } from "./image.js";
 import {
 	getFreq, putFreq, getBcdId, putBcdId, getTone, putTone, getName, putName, getCoord, coordBytes, u16, put16,
 } from "./fields.js";
+import { decodeArea, getKey, putKeys, keyValid, KEYS } from "./kv.js";
 
 export const LIMITS = {
 	channels: 1024, zones: 68, zoneChannels: 80, contacts: 1024, rxLists: 76, rxListContacts: 32,
@@ -58,24 +59,12 @@ export function blankChannel() {
 }
 
 // A record, or null if its frequencies don't decode (an erased or broken record)
-// Used by the model and encoder so no caller can write an invalid Classic P25 record.
-export function p25Problems(c) {
- const out=[];const range=(field,max)=>{if(!Number.isInteger(c[field])||c[field]<0||c[field]>max)out.push({field,code:"classic_p25_range",max});};
- range("p25RxNac",0xFFF);range("p25Tg",65535);range("p25Id",9999999);
- if(c.p25RxNac===0xF7F)out.push({field:"p25RxNac",code:"classic_p25_rx_reserved"});
- if(c.p25TxNac!=null){range("p25TxNac",0xFFF);if(c.p25TxNac===0xF7E||c.p25TxNac===0xF7F)out.push({field:"p25TxNac",code:"classic_p25_tx_reserved"});}
- const tx=c.p25TxNac??c.p25RxNac;
- if(!c.rxOnly&&(tx===0xF7E||!c.p25Tg||!c.p25Id))out.push({field:"p25TxNac",code:"classic_p25_tx_identity"});
- if(c.bw!==12.5)out.push({field:"bw",code:"classic_p25_bandwidth"});
- return out;
-}
-
 export function decodeChannel(r) {
 	const rxHz = getFreq(r, 0x10), txHz = getFreq(r, 0x14);
 	if (rxHz === null || txHz === null) return null;
 	const l1 = r[0x26], f1 = r[0x30], f4 = r[0x33];
 	const hasLoc = (l1 & 0x08) !== 0;
-	const out = {
+	return {
 		name: getName(r, 0, 16),
 		rxHz, txHz,
 		mode: r[0x18] === 1 ? "dmr" : "fm",
@@ -106,34 +95,18 @@ export function decodeChannel(r) {
 		lon: getCoord(r[0x24], r[0x1F], r[0x1E]),
 		sfr: (l1 & 0x02) !== 0,
 		sfrA: r[0x25],
-		sfrB: r[0x2A],
-        p25RxNac:0x293,p25TxNac:null,p25Tg:1,p25Id:1,
+		sfrB: r[0x2A] & ~0x40,
+		toneBurst: r[0x2A] !== 0xFF && (r[0x2A] & 0x40) !== 0,	// FM: SFR byte B bit 6, read without the SFR flag (7.3.3); 0xFF = not set
 	};
- if(r[0x18]===0xA5){
-  out.mode="p25";out.p25RxNac=((r[0x2C]&15)<<8)|r[0x2B];
-  const tag=r[0x2C]>>4;out.p25TxNac=tag===14?u16(r,0x22):null;
-  out.p25Tg=u16(r,0x2E);out.p25Id=out.dmrId;
-  out.contact=0;out.rxList=0;out.dmrId=0;out.rxTone="";out.txTone="";
-  out.dmo=out.roam=out.vox=false;
-  if((tag!==13&&tag!==14)||p25Problems(out).length)out.mode="unsupported";
- } else if(r[0x18]!==0&&r[0x18]!==1)out.mode="unsupported";
- return out;
 }
 
 // Write a channel's fields onto its stored record r (a blank one if r doesn't decode); r is changed in place
 export function encodeChannel(c, r) {
- const p25=c.mode==="p25",wasP25=r[0x18]===0xA5;
- if(c.mode==="unsupported")throw new RangeError("Unsupported channel format");
- if(p25){
-  const errors=p25Problems(c);if(errors.length)throw new RangeError(errors[0].code);
-  c={...c,contact:c.p25Tg,rxList:c.p25RxNac&255,dmrId:c.p25Id,
-     colorCode:c.p25RxNac>>8,rxTone:"",txTone:"",dmo:false,vox:false,roam:false};
- }
 	if (getFreq(r, 0x10) === null) r.set(blankChannel());
 	putName(r, 0, 16, c.name);
 	putFreq(r, 0x10, c.rxHz);
 	putFreq(r, 0x14, c.txHz);
-	r[0x18] = p25 ? 0xA5 : c.mode === "dmr" ? 1 : 0;
+	r[0x18] = c.mode === "dmr" ? 1 : 0;
 	r[0x19] = clamp(c.power, 0, 255);
 	r[0x1B] = clamp(Math.ceil((c.tot || 0) / 15), 0, 255);
 	putTone(r, 0x20, c.rxTone);
@@ -141,8 +114,7 @@ export function encodeChannel(c, r) {
 	r[0x33] = (r[0x33] & ~0x76) | (c.bw === 25 ? 0x02 : 0) | (c.rxOnly ? 0x04 : 0) | (c.allSkip ? 0x10 : 0) |
 		(c.zoneSkip ? 0x20 : 0) | (c.vox ? 0x40 : 0);
 	r[0x37] = clamp(c.squelch, 0, 21);
-	r[0x2C] = (p25 ? (c.p25TxNac==null?0xD0:0xE0) : wasP25?0:r[0x2C]&0xF0) | (c.colorCode & 0x0F);
- if(p25&&c.p25TxNac!=null)put16(r,0x22,c.p25TxNac);
+	r[0x2C] = (r[0x2C] & 0xF0) | (c.colorCode & 0x0F);
 	r[0x31] = (r[0x31] & ~0x40) | (c.timeslot === 2 ? 0x40 : 0);
 	put16(r, 0x2E, c.contact || 0);
 	r[0x2B] = clamp(c.rxList || 0, 0, 255);
@@ -168,7 +140,8 @@ export function encodeChannel(c, r) {
 		r[0x24] = oh; r[0x1F] = om; r[0x1E] = ol;
 	}
 	r[0x25] = c.sfrA & 0xFF;
-	r[0x2A] = c.sfrB & 0xFF;
+	r[0x2A] = (c.sfrB & 0xBF) | (c.toneBurst ? 0x40 : 0);
+	if (r[0x2A] === 0xFF) r[0x2A] = 0xCF;	// 0xFF reads as not set: the unused bits 5-4 cleared (as the firmware)
 	return r;
 }
 
@@ -254,7 +227,7 @@ export function decodeDtmf(r) {
 	if (r[0] === 0xFF || r[0] === 0x00) return null;
 	let code = "";
 	for (let i = 16; i < 32 && r[i] < 16; i++) code += DTMF[r[i]];
-	if (!code) return null; // Residual data is not a contact without a dialable number.
+	if (!code) return null;
 	return { name: getName(r, 0, 16), code };
 }
 
@@ -338,10 +311,13 @@ export function encodeAprs(a, r) {
 	return r;
 }
 
-// --- General settings, boot text (7.3.2, 7.2) ---
+// --- General settings, boot text (7.3.2, 7.2), the settings area's keys (codeplug-settings.md) ---
 
+// The settings area's keys (kv.js KEYS; arsServer, ipGateway: DMR IDs, 0 = off; the Settings > Sound tones: true on,
+// false off) are fields too: null when the key is absent (the radio keeps its own setting)
 export function decodeGeneral(b) {
 	const g = b.subarray(GENERAL, GENERAL + GENERAL_SIZE);
+	const kv = decodeArea(b).entries;
 	return {
 		radioName: getName(g, 0, 8),
 		dmrId: getBcdId(g, 8),
@@ -349,6 +325,7 @@ export function decodeGeneral(b) {
 		privateHang: g[0x19] === 0xFF ? 0 : g[0x19],
 		bootLine1: getName(b, BOOT_TEXT, 16),
 		bootLine2: getName(b, BOOT_TEXT + 16, 16),
+		...Object.fromEntries(KEYS.map((row) => [row.name, getKey(kv, row)])),
 	};
 }
 
@@ -364,4 +341,12 @@ export function encodeGeneral(s, b) {
 	if (was.privateHang !== s.privateHang) g[0x19] = s.privateHang & 0xFF;
 	if (was.bootLine1 !== s.bootLine1) putName(b, BOOT_TEXT, 16, s.bootLine1);
 	if (was.bootLine2 !== s.bootLine2) putName(b, BOOT_TEXT + 16, 16, s.bootLine2);
+	// the settings area only when one of its keys changed; an area of a newer version is never written (model.js
+	// validate() warns), nor is a value out of range (validate()'s error)
+	const vals = {};
+	for (const row of KEYS) {
+		const v = s[row.name] ?? null;
+		if (was[row.name] !== v && (v === null || keyValid(row, v))) vals[row.name] = v;
+	}
+	if (Object.keys(vals).length) putKeys(b, vals);
 }

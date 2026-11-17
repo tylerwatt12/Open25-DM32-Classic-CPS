@@ -27,12 +27,12 @@ page='''<!doctype html>
 </div></header>
 <main id="main"><section class="wrap section page-head compact">
 <h1>Open25-DM32 Classic CPS</h1><p class="lead">Program FM, DMR and conventional P25 channels for Classic.</p>
-<p class="edition-note">For <strong>Open25-DM32 Classic</strong> firmware on the DM-32UV. For Next firmware, use <a href="../cps/">Next CPS</a>.</p>
+<p class="edition-note">For <strong>Open25-DM32 Classic r9 or later</strong> on the DM-32UV. Recreate earlier programming after updating. For Next firmware, use <a href="../cps/">Next CPS</a>.</p>
 </section><section class="wrap section editor-section">
 <div id="editor" class="editor"><p class="muted">Loading editor…</p></div><noscript>Enable JavaScript to use the editor.</noscript>
 </section></main>
 <footer class="wrap classic-footer"><p>Open25-DM32 Classic CPS · <a href="https://github.com/tylerwatt12/Open25-DM32/issues">Support and issues</a> · <a href="LICENSE">MIT license</a></p>
-<p class="small muted">Based on RadioFoundry’s open-source codeplug editor. <a href="https://github.com/RadioFoundry/RadioFoundry/tree/dfbaf20c400c73e2ccf6edb80af7d1d255bee418/site/static/js/codeplug">Upstream source</a> · <a href="UPSTREAM-AUTHORS">Upstream authors</a>. Codeplug files and drafts stay in your browser.</p></footer>
+<p class="small muted">Based on RadioFoundry’s open-source codeplug editor. <a href="https://github.com/RadioFoundry/RadioFoundry/tree/9e1f7209cd00c2575f18c72746ed4dbb1f482f67/site/static/js/codeplug">Upstream source</a> · <a href="UPSTREAM-AUTHORS">Upstream authors</a>. Codeplug files and drafts stay in your browser.</p></footer>
 <script type="application/json" id="i18n">'''+catalog+'''</script>
 <script type="module" src="static/js/editor/app.js"></script>
 </body></html>

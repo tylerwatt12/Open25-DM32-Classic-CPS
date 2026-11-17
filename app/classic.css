@@ -10,3 +10,8 @@
 .classic-footer { border-top:1px solid var(--border); padding-block:1rem; }
 .grid-wrap { max-height:calc(100vh - 21rem); }
 @media(max-width:700px) { .site-header nav { margin-left:0; font-size:.85rem; gap:.8rem; } .grid-wrap { max-height:65vh; } }
+.grid td.in-range { box-shadow:inset 0 0 0 1px var(--accent); background:var(--accent-soft); }
+.grid td.invalid { box-shadow:inset 0 0 0 2px #b42318; }
+.grid td[data-col] { user-select:none; }
+.grid td.editing input, .grid td.editing select { user-select:text; }
+.grid td.c-ro { background:var(--surface-2); color:var(--muted); }

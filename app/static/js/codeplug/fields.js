@@ -3,15 +3,6 @@
 // Field encodings of the open-firmware codeplug (docs/spec/open-firmware-cps.md 7.3): BCD frequencies, DMR IDs and
 // tones, 0xFF-padded names, 24-bit locations. The C reference is core/codeplug/codeplug.c. Runs in browsers and Node.
 
-// Classic NACs are hexadecimal in the UI; null TX NAC means inherit RX.
-export function parseNac(value, inherit = false) {
- if (inherit && (value == null || /^(?:|same as rx|inherit)$/i.test(String(value).trim()))) return null;
- if (typeof value === "number") return Number.isInteger(value) && value >= 0 && value <= 0xFFF ? value : undefined;
- const s=String(value ?? "").trim().replace(/^(?:0x|\$)/i, "");
- return /^[0-9a-f]{1,3}$/i.test(s) ? parseInt(s,16) : undefined;
-}
-export const nacText = (value) => value == null || value === "" ? "Same as RX" : Number(value).toString(16).toUpperCase().padStart(3,"0");
-
 // Packed BCD, most significant digit first in the word; null if a nibble is not 0-9
 export function bcd(word, digits) {
 	let v = 0;

@@ -6,6 +6,7 @@
 
 import { register } from "./extensions.js";
 import { importQdmr, exportQdmr, QdmrError } from "../codeplug/qdmr.js";
+import { datedName } from "./files.js";
 
 register({
 	saveItems(api) {
@@ -20,9 +21,9 @@ register({
 });
 
 function save(api) {
-	let result;try{result=exportQdmr(api.model);}catch(e){if(e instanceof QdmrError)return api.say(api.t(`editor.qdmr.err.${e.code}`),"bad");throw e;}
- const { text, notes } = result;
-	api.download(`${api.fileName || "codeplug"}.yaml`, new TextEncoder().encode(text));
+ let result;try{result=exportQdmr(api.model);}catch(e){if(!(e instanceof QdmrError))throw e;return api.say(api.t(`editor.qdmr.err.${e.code}`),"bad");}
+	const { text, notes } = result;
+	api.download(`${datedName(api.fileName)}.yaml`, new TextEncoder().encode(text));
 	if (notes.length) report(api, api.t("editor.qdmr.saved_title"), api.t("editor.qdmr.saved_notes"), notes);
 }
 

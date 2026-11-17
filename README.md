@@ -1,8 +1,32 @@
 # Open25-DM32 Classic CPS
 
+**Classic r9 and later use RFKV programming only.** Update firmware and CPS
+together. Earlier Classic programming files and browser drafts are unsupported;
+create new programming after the update. This release has no legacy-format
+reader, writer or automatic conversion path. Full-radio recovery remains a
+separate flasher operation.
+
 A standalone browser codeplug editor for **Open25-DM32 Classic** on the
 Baofeng DM-32UV. Live at https://kd8zmm.com/open25-dm32/classic-cps/.
 Next CPS remains separately hosted at `/open25-dm32/cps/`.
+
+This edition uses RadioFoundry revision `9e1f7209` directly: safe base channel
+records, mode/system records in RFKV and upstream raw CPS/CPS_FAST. Noncanonical
+channel records are refused before they can be interpreted or programmed.
+Standard upstream stock-device import and current CSV interchange remain
+separate editing features; retired Open25 programming is not converted.
+Continuation sectors use the upstream header continuation field and alternate
+banks so existing 1024-channel programming fits. The settings root is written
+last, after continuation integrity checks.
+
+This repository owns the common editor/model/format code. Next’s copy is derived
+by `web-installer/tools/sync_cps.py`; `--check` verifies exact source and derived
+hashes in `cps/UPSTREAM-SHARED.json`. Next independently owns only its schema-5
+file importer, device-local Programming authorization and branding. Its firmware
+source is not copied into this repository. Unreleased extension assignments in
+the upstream development-key range are documented with the firmware source;
+they preserve existing scan lists, bandplans and zone links until upstream IDs
+are assigned.
 
 Adapted from RadioFoundry's MIT codeplug editor at the exact revision recorded
 in `UPSTREAM.json`. Original MIT notices and author credits are retained.
@@ -11,7 +35,8 @@ it contains no Next CPS implementation.
 
 ## Programming
 
-Use desktop Chrome or Edge for radio read/write over Web Serial. Turn the radio
+Use Classic r9 or later and desktop Chrome or Edge for radio read/write over
+Web Serial. Turn the radio
 on normally, close other applications using its port, and choose Read from Radio.
 Read and save an original BIN before editing. This CPS accepts Classic firmware;
 it refuses a Next or unrecognized firmware identity before programming.
@@ -22,27 +47,23 @@ the Mode selector in the channel table or the pencil/edit form:
 - **RX NAC**: hexadecimal `000`–`FFF`; `F7E` receives any NAC; `F7F` is reserved.
 - **TX NAC**: `Same as RX` or an explicit hexadecimal NAC. `000` is a valid
   explicit NAC. `F7E` and `F7F` cannot be transmitted.
-- **P25 Talkgroup**: decimal 1–65535 for transmitting channels.
-- **P25 Radio ID**: decimal 1–9999999 for transmitting channels.
+- **Talkgroup override**: decimal 1–65535 for transmitting channels.
+- **Channel Radio ID**: decimal 1–16777214 for transmitting channels. Values
+  above 9999999 retain the upstream interoperability warning.
 
-P25 uses 12.5 kHz. A wildcard RX NAC needs an explicit valid TX NAC or RX Only.
+P25 uses 12.5 kHz. A blank TX NAC inherits RX; with wildcard RX F7E, it uses
+TX NAC 293. Set an explicit TX NAC when a different transmit NAC is needed.
 RX-only channels may use zero talkgroup/radio ID. P25 values are independent of
 DMR contacts, RX lists and DMR IDs. Add channels to a zone for normal selection
 on the radio. This is conventional P25; no trunking configuration is provided.
 
-BIN and CSV preserve P25 fields, including separate RX/TX NACs. qdmr YAML export
+BIN preserves all mode/system records. Conventional-channel CSV preserves P25
+fields, including separate RX/TX NACs. Use BIN for systems/sites/scan/bandplan
+records that the CSV or qdmr schema cannot express. qdmr YAML export
 refuses P25 because that format cannot represent these Classic fields. Unknown
 channel formats are preserved in an unchanged BIN, flagged, and blocked from
 radio writes until corrected. Drafts stay in this browser, separate from Next.
 Contact downloads use RadioID only when requested; no codeplug is uploaded.
-
-## Initial source release
-
-This initial source snapshot matches the currently live Classic CPS, based on
-`fcac0f5f761996ee78232e5c7450402ba37eaaf7`. It uses the legacy Classic
-programming format compatible with installed r7/r8 firmware. It does not contain
-the unreleased RFKV migration. `LIVE-SNAPSHOT.json` records the exact deployed
-54-file payload. Packaging does not change runtime files.
 
 ## Development and validation
 
@@ -55,30 +76,25 @@ npm run test:browser
 npm start
 ```
 
-`npm run prepare:tests` fetches the published Classic r8 source at
-`a12f996118ec367593ef2736990c93a76f778823` into ignored `build/classic-source`,
-then prepares only host-test source, not a target firmware build. This needs
-Python 3.10+, Node 22+, Git, Make and a host C compiler (`clang` on macOS).
-No C-SKY toolchain is required for these CPS tests. Alternatively set
-`OPEN25_CLASSIC_SOURCE` to an already prepared, compatible Classic r8 checkout;
-that checkout is used to build its host simulator. The current RFKV migration
-checkout is incompatible with these legacy-format tests.
+`npm run prepare:tests` fetches published Classic r9 source at
+`f3794c357ca22652efffe5050ca67745106d7c0f` into ignored `build/classic-source`
+and prepares the real host simulator and C encoder/decoder. Use Node22+,
+Python3.10+, Git, Make and a host C compiler; the C cross-check is tested with
+clang on macOS. No target compiler is needed for the CPS tests. Alternatively
+set `OPEN25_CLASSIC_SOURCE` to an already prepared matching RFKV-only firmware
+checkout. An old r7/r8 source checkout cannot validate this programming format.
 Host tests exercise all usable TX NACs, validation limits, CSV/BIN round trips,
 unchanged FM/DMR bytes, DMR reference isolation and simulated serial writes.
 Browser tests use installed Chrome (or install Chrome through Playwright).
 `CPS_URL` selects a hosted deployment for the same browser checks; `#sim` uses
 only a browser-local simulated radio. No test flashes firmware or keys RF.
 
-## Local release packaging
+## Source and local packaging
 
-`npm run verify` checks the initial deployed hashes. `npm run package` rebuilds
-and verifies the static app, then writes only the 54 reviewed live files under
-`build/site/classic-cps/`. It preserves an existing output instead of overwriting
-it. This command never uploads or deploys anything. Site administration and SSH
-configuration are maintained separately from the public source.
-
-Source code is published in
-[Open25-DM32-Classic-CPS](https://github.com/tylerwatt12/Open25-DM32-Classic-CPS).
-Source publication and local packaging do not deploy or change the live site.
-The original MIT license, upstream author list and source hash inventory remain
-in LICENSE, UPSTREAM-AUTHORS and UPSTREAM.json.
+Source is published in [Open25-DM32-Classic-CPS](https://github.com/tylerwatt12/Open25-DM32-Classic-CPS).
+`npm run verify` checks the current release payload manifest. `npm run package`
+builds and verifies only the current Classic CPS static files into ignored
+`build/site/classic-cps/`; it refuses to overwrite an existing payload. No command
+in this source repository deploys to the website or accesses a physical radio.
+Site administration is maintained separately. Preserve LICENSE, UPSTREAM-AUTHORS
+and UPSTREAM.json with every source/static distribution.

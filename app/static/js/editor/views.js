@@ -5,9 +5,13 @@
 // nothing when the value was taken.
 
 import { h, button } from "../flasher/dom.js";
-import { parseFreq, parseTone, mhz, parseNac, nacText } from "../codeplug/fields.js";
+import { parseFreq, parseTone, mhz } from "../codeplug/fields.js";
 import { LIMITS, POWER_NAMES } from "../codeplug/records.js";
 import { refNumber, listenBand } from "../codeplug/model.js";
+import { keyValid } from "../codeplug/kv.js";
+import { kindRow, kindName, offeredKinds } from "../codeplug/modes.js";
+import { setKind } from "../codeplug/channelmodes.js";
+import { specField,parseSpec,formatSpec,label as specLabel } from "./modefields.js";
 
 // --- Parsers shared by the columns and the forms ---
 
@@ -56,7 +60,17 @@ const rxFreq = (t) => (r, k, v) => {
 const listening = (value) => !!listenBand(parseFreq(value("rxHz")));
 
 // The mode as the radio shows it: an FM channel in the air band is received in AM
-const modeText = (r, t) => (r.mode === "p25" ? "P25" : r.mode === "unsupported" ? "Unsupported" : r.mode === "dmr" ? "DMR" : listenBand(r.rxHz) ? t(`editor.mode.${listenBand(r.rxHz)}`) : "FM");
+// A channel of a kind (channel-modes.md): the kind's short name
+const modeText = (r, t) => (r.kind ? kindName(r.kind) : r.mode === "dmr" ? "DMR" : listenBand(r.rxHz) ? t(`editor.mode.${listenBand(r.rxHz)}`) : "FM");
+const kindMod = (r) => (r.kind ? kindRow(r.kind)?.module ?? null : null);
+// A channel of a kind keeps the record's fields its module lists (a talk target, a unit ID); the rest of FM and DMR
+// stays as stored and is not shown
+const recordField = (r, key) => {const fields=kindMod(r)?.recordFields;return !r.kind||!!(typeof fields==='function'?fields(r):fields)?.includes(key)};
+// Frequencies of its own: a trunked kind's are its system's
+const ownFreqs = (r) => !r.kind || kindMod(r)?.ownFreqs !== false;
+// Receive only: for a channel of a kind, its tag's transmit allowed turned round (the record is receive only)
+const rxOnlyGet = (r) => (r.kind ? !r.tagTx : r.rxOnly);
+const rxOnlySet = (r, v) => (r.kind ? (r.tagTx = !v) : (r.rxOnly = !!v));
 
 const tone = (t) => (r, k, v) => {
 	const s = parseTone(v);
@@ -74,6 +88,16 @@ const dmrId = (t) => (r, k, v) => {
 	if (!Number.isInteger(n) || n < 1 || n > 0xFFFFFF) return t("editor.err.id_range");
 	r[k] = n;
 };
+
+// A settings area key that is a number (kv.js KEYS: a uint, int, enum or id row; codeplug-settings.md 3) as typed on
+// the Radio tab: {value} or {error}. Empty is an absent key (null: the radio keeps its own setting); for an ID, 0
+// turns the setting off
+export function parseAreaKey(row, v, t) {
+	const s = String(v ?? "").trim();
+	if (s === "") return { value: null };
+	const n = Number(s);
+	return keyValid(row, n) ? { value: n } : { error: t("editor.err.range", { min: row.min, max: row.max }) };
+}
 
 const pick = (r, k, v) => {
 	r[k] = v;
@@ -94,23 +118,9 @@ export function powerOptions(t) {
 function refOptions(list, t, label = (x) => x.name) {
 	return [[null, t("editor.none")], ...list.map((x) => [x, label(x)])];
 }
+const contactOptions=(m,r={},t)=>refOptions(m.contacts.filter(c=>c===r.contact||!kindMod(r)?.acceptContact||kindMod(r).acceptContact(c)),t);
 
 const refLabel = (v, t) => (v == null ? "" : typeof v === "number" ? t("editor.missing", { n: v }) : v.name);
-
-// Mode defaults match Classic's front-panel editor; P25 has its own identity fields.
-const modeSet=(r,k,value)=>{
- if(!["fm","dmr","p25"].includes(value))return "Choose FM, DMR or P25";
- if(value==="p25"){
-  r.bw=12.5;r.p25RxNac??=0x293;r.p25TxNac??=null;r.p25Tg??=1;r.p25Id??=1;
-  r.vox=r.roam=r.dmo=false;
- }
- r[k]=value;
-};
-const nac=(inherit,t)=>(r,k,v)=>{
- const n=parseNac(v,inherit);
- if(n===undefined||n===0xF7F||(inherit&&n===0xF7E))return t("editor.err.classic_nac");
- r[k]=n;
-};
 
 // --- Columns per table ---
 
@@ -118,7 +128,7 @@ const nac=(inherit,t)=>(r,k,v)=>{
 // table whose members are edited in its own dialog (zones, RX lists): Bulk Edit isn't offered there
 export const bulkColumns = (table, m, t) => columns(table, m, t).filter((c) => c.readOnly !== true && c.key !== "name" && c.key !== "number");
 
-export function columns(table, m, t) {
+export function columns(table, m, t, {features=null,keyMask=null} = {}) {
 	const col = (key, label, type, parse, extra = {}) => ({
 		key, label: t(label), type,
 		get: (r) => r[key],
@@ -126,43 +136,55 @@ export function columns(table, m, t) {
 		readOnly: !parse,
 		...extra,
 	});
-	// a column of one mode only: blank and locked on a channel of the other mode (its value is kept)
+	// a column of one mode only: blank and locked on a channel of the other mode (its value is kept), and on a
+	// channel of a kind that doesn't use the record's field
 	const only = (mode, c) => {
 		const format = c.format;
-		return { ...c, readOnly: (r) => r.mode !== mode, format: (v, r) => (r.mode !== mode ? "" : format ? format(v, r) : c.type === "select" ? c.options(r).find(([k]) => k === v)?.[1] ?? "" : v) };
+		const off = (r) => !(r.kind?recordField(r,c.key):r.mode===mode);
+		return { ...c, readOnly: off, format: (v, r) => (off(r) ? "" : format ? format(v, r) : c.type === "select" ? c.options(r).find(([k]) => k === v)?.[1] ?? "" : v) };
 	};
+	const own = (c) => ({ ...c, readOnly: (r) => !ownFreqs(r) });
+	const kinds=offeredKinds(m,features);
+ const modeColumns=kinds.flatMap(k=>k.module.fields().filter(spec=>!spec.feature||features?.includes(spec.feature)).map(spec=>({
+  key:`k${k.id}.${spec.key}`,label:specLabel(t,spec.label),type:spec.type==='select'?'select':spec.type==='bool'?'bool':'text',
+  get:r=>r.params?.[spec.key],readOnly:r=>r.kind!==k.id||!!(spec.show&&!spec.show(r.params,r)),
+  options:spec.options?(r={})=>spec.options(r.params??{}).filter(([v])=>spec.key!=="keySlot"||keyMask==null||v===0||v===r.params?.keySlot||keyMask&(1<<(v-1))).map(([v,l])=>[v,specLabel(t,l)]):undefined,
+  format:(v,r)=>r.kind===k.id?formatSpec(spec,v,t,r.params??{}):'',
+  set:(r,raw)=>{let value=raw;if(spec.type!=='select'&&spec.type!=='bool'){const parsed=parseSpec(spec,raw,t,r.params??{});if(parsed.error)return parsed.error;value=parsed.value;}r.params={...r.params,[spec.key]:value};},
+ })));
 	const num = { key: "number", label: "#", type: "number", get: (r) => r.number, readOnly: true, width: "3.5rem", format: (v) => v ?? "–" };
 	switch (table) {
+    case 'scanLists':return [num,col('name','editor.col.name','text',name(16)(t)),col('talkback','editor.scan.talkback','bool',pick),{key:'channels',label:t('editor.tab.channels'),get:r=>r.channels.length,readOnly:true}];
+    case 'idenSets':return [num,col('name','editor.col.name','text',name(16)(t)),{key:'rows',label:t('editor.iden.rows'),get:r=>r.rows.filter(x=>x.baseHz).length,readOnly:true}];
 	case "channels":
 		return [
 			num,
 			col("name", "editor.col.name", "text", name(LIMITS.name)(t)),
-			col("mode", "editor.col.mode", "select", modeSet, { options: () => [["fm", "FM"], ["dmr", "DMR"], ["p25", "P25"]], format: (v, r) => modeText(r, t) }),
-			col("rxHz", "editor.col.rx", "text", (r, k, v) => {
+			// a channel's kind is changed in its form
+			col("mode", "editor.col.mode", "select", null, {get:r=>r.kind?`k${r.kind}`:r.mode,set:(r,v)=>v.startsWith("k")?setKind(m,r,Number(v.slice(1))):setKind(m,r,0,v),options:()=>[["fm","FM"],...(!features||features.includes("DMR")?[["dmr","DMR"]]:[]),...kinds.map(k=>[`k${k.id}`,k.short])],format:(v,r)=>modeText(r,t),readOnly:false}),
+			own(col("rxHz", "editor.col.rx", "text", (r, k, v) => {
 				// a simplex channel stays simplex: TX follows RX when they were the same
 				const was = r.rxHz;
 				const err = rxFreq(t)(r, k, v);
 				if (!err && r.txHz === was) r.txHz = r.rxHz;
 				return err;
-			}, { format: mhz, numeric: true }),
-			col("txHz", "editor.col.tx", "text", freq(t), { format: mhz, numeric: true }),
+			}, { format: mhz, numeric: true })),
+			own(col("txHz", "editor.col.tx", "text", freq(t), { format: mhz, numeric: true })),
 			col("power", "editor.col.power", "select", pick, { options: () => powerOptions(t) }),
-            only("p25",col("p25RxNac","editor.col.p25_rx_nac","text",nac(false,t),{format:nacText})),
-            only("p25",col("p25TxNac","editor.col.p25_tx_nac","text",nac(true,t),{format:nacText})),
-            only("p25",col("p25Tg","editor.col.p25_tg","text",int(0,65535)(t),{numeric:true})),
-            only("p25",col("p25Id","editor.col.p25_id","text",int(0,9999999)(t),{numeric:true})),
+ ...(kinds.some(k=>k.module.systemType)?[{key:"system",label:t("editor.modes.system"),type:"select",get:r=>r.system,readOnly:r=>!kindRow(r.kind)?.module.systemType,options:r=>systemOptions(m,t,kindRow(r.kind)?.module.systemType,r.system),set:(r,v)=>r.system=v,format:(v,r)=>kindRow(r.kind)?.module.systemType?(v?.name??(v?`#${v}`:"")):""}]:[]),
+ ...modeColumns,
 			only("fm", col("bw", "editor.col.bw", "select", pick, { options: () => [[12.5, "12.5"], [25, "25"]] })),
 			only("fm", col("rxTone", "editor.col.rx_tone", "text", tone(t), { format: (v) => toneText(v, t), editValue: (v) => v })),
 			only("fm", col("txTone", "editor.col.tx_tone", "text", tone(t), { format: (v) => toneText(v, t), editValue: (v) => v })),
 			only("dmr", col("colorCode", "editor.col.cc", "select", pick, { options: () => [...Array(16).keys()].map((n) => [n, String(n)]) })),
 			only("dmr", col("timeslot", "editor.col.ts", "select", pick, { options: () => [[1, "1"], [2, "2"]] })),
-			only("dmr", col("contact", "editor.col.contact", "select", pick, { options: () => refOptions(m.contacts, t), format: (v) => refLabel(v, t), sortValue: (r) => refLabel(r.contact, t) })),
+			only("dmr", col("contact", "editor.col.contact", "select", pick, { options: r => contactOptions(m,r,t), format: (v) => refLabel(v, t), sortValue: (r) => refLabel(r.contact, t) })),
 			only("dmr", col("rxList", "editor.col.rx_list", "select", pick, { options: () => refOptions(m.rxLists, t), format: (v) => refLabel(v, t), sortValue: (r) => refLabel(r.rxList, t) })),
-			col("rxOnly", "editor.col.rx_only", "bool", bool),
+			{ ...col("rxOnly", "editor.col.rx_only", "bool", bool), get: rxOnlyGet, set: (r, v) => rxOnlySet(r, v) },
 			col("zoneSkip", "editor.col.zone_skip", "bool", bool),
 		];
 	case "zones":
-		return [
+		return [{key:"scan",label:t("editor.zone.scan"),get:r=>r.scan,type:"select",options:(r={})=>[[null,t("editor.none")],...(m.scanLists??[]).map(x=>[x,x.name]),...(typeof r.scan==='number'?[[r.scan,t('editor.missing',{n:r.scan})]]:[])],set:(r,v)=>r.scan=v,format:v=>typeof v==='number'?t('editor.missing',{n:v}):v?.name??""},
 			col("name", "editor.col.name", "text", name(LIMITS.name)(t)),
 			{ key: "count", label: t("editor.col.channels"), type: "number", readOnly: true, get: (r) => r.channels.length, width: "7rem" },
 			{ key: "list", label: t("editor.col.members"), type: "text", readOnly: true, get: (r) => r.channels.map((c) => refLabel(c, t)).join(", ") },
@@ -234,22 +256,66 @@ const sfrField = (key, shift, mask, byte = "sfrA") => ({
 	key,
 });
 
-export function channelForm(m, t) {
+// The channels a fallback may name (channel-modes.md 7.3): plain ones, but the record being edited (self, or the
+// form's copy of it); the current one stays listed when it isn't one of them
+export function fallbackOptions(m, t, current, self = null, none = t("editor.modes.fallback_system")) {
+	const list = m.channels.filter((c) => !c.kind && c !== self && !(self?.number && c.number === self.number)).sort((a, b) => a.number - b.number);
+	const out = [[null, none], ...list.map((c) => [c, `${c.number} · ${c.name}`])];
+	if (current != null && !list.includes(current)) out.push([current, typeof current === "number" ? t("editor.missing", { n: current }) : `${current.number} · ${current.name}`]);
+	return out;
+}
+
+// The systems of a type a channel may name; a number as read stays listed
+export function systemOptions(m, t, type, current) {
+	const out = (m.systems ?? []).filter((s) => s.type === type).sort((a, b) => a.number - b.number).map((s) => [s, s.name]);
+	if (current == null) out.unshift([null, t("editor.none")]);
+	else if (typeof current === "number") out.push([current, t("editor.missing", { n: current })]);
+	return out;
+}
+
+// features: the connected radio's (null: none), which says the kinds a channel may be made
+export function channelForm(m, t, { features = null,keyMask=null } = {}) {
 	const sel = (key, label, options, extra = {}) => ({ key, label: t(label), type: "select", options, ...extra });
 	const chk = (key, label) => ({ key, label: t(label), type: "bool" });
 	const txt = (key, label, parse, format) => ({ key, label: t(label), type: "text", parse, format });
-	// the FM and DMR parts show only for a channel of that mode; the other mode's values are kept as they are
-	const fm = (f) => ({ ...f, show: (r) => r.mode === "fm" });
-	const dmr = (f) => ({ ...f, show: (r) => r.mode === "dmr" && (!f.show || f.show(r)) });
-	const p25=(f)=>({...f,show:r=>r.mode==="p25"});
-	const sfr = (f, label, options) => dmr({ ...sfrField(...f), label: t(label), type: "select", options, show: (r) => r.sfr });
+	// the FM and DMR parts show only for a channel of that mode; the other mode's values are kept as they are. A
+	// channel of a kind shows the DMR record fields its module uses
+	const fm = (f) => ({ ...f, show: (r) => r.kind?recordField(r,f.key):r.mode === "fm" });
+	const dmr = (f) => ({ ...f, show: (r) => r.mode === "dmr" && recordField(r, f.key) && (!f.show || f.show(r)) });
+	const sfr = (f, label, options) => dmr({ ...sfrField(...f), label: t(label), type: "select", options, show: (r) => r.sfr && !r.kind });
+	// FM, DMR and the kinds offered (modes.js), the channel's own kind too
+	const kinds = offeredKinds(m, features);
+	const modeOptions = (r) => {
+		const out = [["fm", "FM"], ...(!features||features.includes("DMR")?[["dmr","DMR"]]:[]), ...kinds.map((k) => [`k${k.id}`, k.short])];
+		if (r.kind && !kinds.some((k) => k.id === r.kind)) out.push([`k${r.kind}`, kindName(r.kind)]);
+		return out;
+	};
+	const kindFields = [];
+	for (const k of kinds) {
+		const mod = k.module, on = (r) => r.kind === k.id;
+		const holder = { on, get: (r) => r.params, put: (r, key, v) => (r.params = { ...r.params, [key]: v }) };
+		if (mod.systemType) kindFields.push({ ...sel("system", "editor.modes.system", (r) => systemOptions(m, t, mod.systemType, r.system)), key: `k${k.id}.system`, get: (r) => r.system, set: (r, v) => on(r) && (r.system = v), show: on });
+		for (const flag of Object.keys(mod.flags ?? {})) kindFields.push({ ...chk(`k${k.id}.${flag}`, `editor.modes.flag.${flag}`), get: (r) => r[flag], set: (r, v) => on(r) && (r[flag] = !!v), show: on });
+		if (mod.fallback) {
+			kindFields.push({ ...sel(`k${k.id}.fallback`, "editor.modes.fallback", (r) => fallbackOptions(m, t, r.fallback, r)), get: (r) => r.fallback, set: (r, v) => on(r) && (r.fallback = v), show: (r) => on(r) && !r.noFallback });
+		}
+		for (const spec of mod.fields().filter(spec=>!spec.feature||features?.includes(spec.feature))) kindFields.push(specField(spec.key==="keySlot"&&keyMask!=null?{...spec,options:p=>spec.options(p).filter(([v])=>v===0||v===p.keySlot||keyMask&(1<<(v-1)))}:spec, t, holder, `k${k.id}`));
+	}
 	return [
 		{ group: t("editor.form.basic") },
 		txt("name", "editor.col.name", name(LIMITS.name)(t)),
-		sel("mode", "editor.col.mode", () => [["fm", "FM"], ["dmr", "DMR"], ["p25", "P25"]], {set:(r,v)=>modeSet(r,"mode",v)}),
+		sel("mode", "editor.col.mode", modeOptions, {
+			get: (r) => (r.kind ? `k${r.kind}` : r.mode),
+			set: (r, v) => {
+				if (v === (r.kind ? `k${r.kind}` : r.mode)) return;
+				if (v.startsWith("k")) setKind(m, r, Number(v.slice(1)));
+				else setKind(m, r, 0, v);
+			},
+		}),
+		{ type: "note", key: "kindNote", text: (value, w) => (w?.kind && !ownFreqs(w) ? t("editor.modes.freqs_system") : "") },
 		sel("power", "editor.col.power", () => powerOptions(t)),
 		// in a receive-only band TX follows RX, locked (rxFreq)
-		{ type: "pair", key: "freqs", disabled: (w, value) => listening(value),
+		{ type: "pair", key: "freqs", show: ownFreqs, disabled: (w, value) => listening(value),
 			fields: [txt("rxHz", "editor.col.rx", rxFreq(t), mhz), { ...txt("txHz", "editor.col.tx", freq(t), mhz), disabled: (w, value) => listening(value), follows: "rxHz" }], buttons: [
 			["→", t("editor.freq.rx_to_tx"), ([rx]) => [rx, rx]],
 			["⇄", t("editor.freq.swap"), ([rx, tx]) => [tx, rx]],
@@ -261,22 +327,20 @@ export function channelForm(m, t) {
 		} },
 		txt("tot", "editor.col.tot", tot(t), (v) => (v ? String(v) : t("editor.tot.default"))),
 		// a receive-only band makes the channel RX only on save (rxFreq): the box shows it as the RX frequency is typed
-		{ ...chk("rxOnly", "editor.col.rx_only"), implied: listening },
-        p25({group:"P25"}),
-        p25(txt("p25RxNac","editor.col.p25_rx_nac",nac(false,t),nacText)),
-        p25(txt("p25TxNac","editor.col.p25_tx_nac",nac(true,t),nacText)),
-        p25(txt("p25Tg","editor.col.p25_tg",int(0,65535)(t),String)),
-        p25(txt("p25Id","editor.col.p25_id",int(0,9999999)(t),String)),
+		{ ...chk("rxOnly", "editor.col.rx_only"), implied: listening, get: rxOnlyGet, set: rxOnlySet },
+		{ group: t("editor.form.mode_params"), show: (r) => !!r.kind },
+		...kindFields,
 		fm({ group: t("editor.form.analog") }),
 		fm(sel("bw", "editor.col.bw", () => [[12.5, "12.5 kHz"], [25, "25 kHz"]])),
 		fm(txt("rxTone", "editor.col.rx_tone", tone(t), (v) => v)),
 		fm(txt("txTone", "editor.col.tx_tone", tone(t), (v) => v)),
 		fm(sel("squelch", "editor.col.squelch", () => [[0, t("editor.squelch.default")], ...[...Array(21).keys()].map((n) => [n + 1, String(n + 1)])])),
 		fm(chk("vox", "editor.col.vox")),
+		fm(chk("toneBurst", "editor.col.tone_burst")),
 		dmr({ group: t("editor.form.digital") }),
 		dmr(sel("colorCode", "editor.col.cc", () => [...Array(16).keys()].map((n) => [n, String(n)]))),
 		dmr(sel("timeslot", "editor.col.ts", () => [[1, "1"], [2, "2"]])),
-		dmr(sel("contact", "editor.col.contact", () => refOptions(m.contacts, t))),
+		dmr(sel("contact", "editor.col.contact", r => contactOptions(m,r,t))),
 		dmr(sel("rxList", "editor.col.rx_list", () => refOptions(m.rxLists, t))),
 		dmr(txt("dmrId", "editor.col.channel_id", dmrId(t), (v) => (v ? String(v) : ""))),
 		dmr(chk("dmo", "editor.col.dmo")),
@@ -287,7 +351,8 @@ export function channelForm(m, t) {
 		chk("zoneSkip", "editor.col.zone_skip"),
 		chk("allSkip", "editor.col.all_skip"),
 		chk("noEco", "editor.col.no_eco"),
-		chk("roam", "editor.col.roam"),
+		// roaming hunts DMR repeaters by their own frequencies: a channel of a kind follows its system instead
+		{ ...chk("roam", "editor.col.roam"), show: (r) => !r.kind },
 		{ group: t("editor.form.location") },
 		sel("aprs", "editor.col.aprs", () => refOptions(m.aprs, t)),
 		chk("useLocation", "editor.col.use_location"),
@@ -336,7 +401,7 @@ export function formDialog(title, fields, record, t, onSave) {
 			input = h("input", { type: "text", id, value: f.format ? f.format(v ?? "") : v ?? "", spellcheck: "false" });
 		}
 		const label = h("label", { for: id }, typeof f.label === "function" ? f.label(work) : f.label);
-		const row = h("div", { class: "form-row" + (f.type === "bool" ? " form-check" : "") }, label, input);
+		const row = h("div", { class: "form-row" + (f.type === "bool" ? " form-check" : "") }, label, input, f.help ? h("span", { class: "small muted" }, f.help) : null);
 		rows.push({ f, input, row, label });
 		return row;
 	};
@@ -363,8 +428,9 @@ export function formDialog(title, fields, record, t, onSave) {
 				return btn;
 			});
 			const mid = h("div", { class: "pair-tools" }, ...tools);
-			rows.push({ f: { key: f.key, type: "pair", disabled: f.disabled }, input: null, row: null, tools });
-			body.append(h("div", { class: "form-pair" }, a, mid, b));
+			const pair = h("div", { class: "form-pair" }, a, mid, b);
+			rows.push({ f: { key: f.key, type: "pair", disabled: f.disabled, show: f.show }, input: null, row: pair, tools });
+			body.append(pair);
 		} else body.append(field(f));
 	}
 	const byKey = (k) => rows.find((r) => r.f.key === k);
@@ -373,6 +439,7 @@ export function formDialog(title, fields, record, t, onSave) {
 		for (const { f, input, row, label, tools } of rows) {
 			if (f.type === "pair") {
 				for (const b of tools) b.disabled = !!f.disabled?.(work, value);
+				if (f.show && row) row.hidden = !f.show(work);
 				continue;
 			}
 			if (f.type === "group") {
@@ -380,11 +447,11 @@ export function formDialog(title, fields, record, t, onSave) {
 				continue;
 			}
 			if (f.type === "note") {
-				row.textContent = f.text(value);
+				row.textContent = f.text(value, work);
 				row.hidden = !row.textContent;
 				continue;
 			}
-			if (f.show && !f.show(work)) { if(row) row.hidden=true; continue; }
+			if(f.show&&!f.show(work)){if(row)row.hidden=true;continue;}
 			if (f.type === "select") {
 				const v = input._opts[input.selectedIndex]?.[0];
 				f.set ? f.set(work, v) : (work[f.key] = v);
@@ -409,9 +476,9 @@ export function formDialog(title, fields, record, t, onSave) {
 	const dlg = h("dialog", { class: "confirm editor-dialog" });
 	const save = () => {
 		const bad = [];
-		for (const { f, input } of rows) {
+		for (const { f, input,row } of rows) {
 			if (f.type === "bool" || f.type === "pair" || f.type === "group" || f.type === "note") continue;
-			if (f.show && !f.show(work)) continue;
+			if(f.show&&!f.show(work)){if(row)row.hidden=true;continue;}
 			if (f.type === "select") {
 				const v = input._opts[input.selectedIndex]?.[0];
 				f.set ? f.set(work, v) : (work[f.key] = v);

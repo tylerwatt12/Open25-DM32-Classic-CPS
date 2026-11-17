@@ -6,6 +6,7 @@
 import { register } from "./extensions.js";
 import { exportTable, exportAll, importTable, importAll, TABLES, CsvError } from "../codeplug/csv.js";
 import { zip } from "../flasher/zip.js";
+import { datedName } from "./files.js";
 
 const TABLE_TABS = Object.keys(TABLES);
 
@@ -37,15 +38,15 @@ register({
 	},
 });
 
-const base = (api) => api.fileName || "codeplug";
+const base = (api) => datedName(api.fileName);
 
 function saveTable(api, table) {
 	// a byte order mark, so spreadsheet programs read the names as UTF-8
-	api.download(`${base(api)}-${TABLES[table].file}`, new TextEncoder().encode("﻿" + exportTable(api.model, table)));
+	try{api.download(`${base(api)}-${TABLES[table].file}`, new TextEncoder().encode("﻿" + exportTable(api.model, table)));}catch(e){if(!(e instanceof CsvError))throw e;api.say(api.t(`editor.csv.err.${e.code}`),"bad");}
 }
 
 async function saveAll(api) {
-	api.download(`${base(api)}-csv.zip`, await zip(exportAll(api.model)));
+	try{api.download(`${base(api)}-csv.zip`, await zip(exportAll(api.model)));}catch(e){if(!(e instanceof CsvError))throw e;api.say(api.t(`editor.csv.err.${e.code}`),"bad");}
 }
 
 function run(api, name, fn) {

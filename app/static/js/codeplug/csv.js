@@ -6,9 +6,11 @@
 // their references cleared. A file may hold only some columns: the others keep their values. Problems come back as
 // {row, column, code, params}, and the page words them.
 
-import { parseFreq, parseTone, mhz, parseNac, nacText } from "./fields.js";
+import { parseFreq, parseTone, mhz } from "./fields.js";
 import { LIMITS, POWER_NAMES, CALL_TYPES, validDtmf } from "./records.js";
 import { newChannel, newContact, remove, assignNumbers } from "./model.js";
+import {KINDS} from "./modes.js";
+import {setKind} from "./channelmodes.js";
 
 // --- RFC 4180 ---
 
@@ -145,7 +147,7 @@ const asWord = (words, dflt, lo, hi) => (s) => {
 
 const POWER = { ...POWER_NAMES };
 const powerText = (n) => POWER_NAMES[n] || String(n);
-const MODES = { fm: "FM", dmr: "DMR", p25:"P25" };
+const MODES = { fm: "FM", dmr: "DMR" };
 const TYPES = Object.fromEntries(CALL_TYPES.map((k) => [k, k[0].toUpperCase() + k.slice(1)]));
 
 // --- References by name ---
@@ -294,11 +296,14 @@ export const TABLES = {
 		columns: [
 			NUMBER(LIMITS.channels),
 			c("Name", "name", asName(LIMITS.name), undefined, ["Channel Name", "Channel"]),
-			c("Mode", "mode", asWord(MODES, "fm"), (r) => MODES[r.mode], ["Channel Mode", "Channel Type", "Type"]),
-            c("RX NAC (hex)","p25RxNac",(s)=>{const n=parseNac(s||"293");if(n===undefined||n===0xF7F)throw new Bad("classic_nac");return n;},r=>r.mode==="p25"?nacText(r.p25RxNac):"",["RX NAC"]),
-            c("TX NAC (hex)","p25TxNac",(s)=>{const n=parseNac(s,true);if(n===undefined||n===0xF7F||n===0xF7E)throw new Bad("classic_nac");return n;},r=>r.mode==="p25"?nacText(r.p25TxNac):"",["TX NAC"]),
-            c("P25 Talkgroup","p25Tg",asInt(0,65535,1),r=>r.mode==="p25"?r.p25Tg:"",["Talkgroup"]),
-            c("P25 Radio ID","p25Id",asInt(0,9999999,1),r=>r.mode==="p25"?r.p25Id:""),
+			{header:"Mode",aliases:["Channel Mode","Channel Type","Type"],key:"mode",get:r=>r.kind?KINDS.find(k=>k.id===r.kind)?.short??`Kind ${r.kind}`:MODES[r.mode],set:(r,s,m)=>{const kind=KINDS.find(k=>k.short.toLowerCase()===s.trim().toLowerCase());if(kind)setKind(m,r,kind.id);else setKind(m,r,0,asWord(MODES,"fm")(s));}},
+            ...KINDS.flatMap(kind=>kind.module.fields().map(spec=>({
+                header:(kind.id===2?({rxNac:'RX NAC (hex)',txNac:'TX NAC (hex)',talkgroup:'Talkgroup override'})[spec.key]:null)??`${kind.short} ${spec.key.replace(/([A-Z])/g,' $1')}`,
+                key:`k${kind.id}.${spec.key}`,aliases:[],
+                get:r=>{if(r.kind!==kind.id)return '';const v=r.params?.[spec.key];if(v==null)return '';return spec.type==='hex'?v.toString(16).toUpperCase().padStart(spec.digits??1,'0'):spec.type==='bool'?yesNo(v):spec.type==='select'?spec.options().find(([n])=>n===v)?.[1]??v:String(v)},
+                set:(r,s)=>{if(r.kind!==kind.id)return;let v;if(spec.type==='bool')v=asBool(s);else if(spec.type==='select'){const found=spec.options().find(([n,label])=>String(label).toLowerCase()===s.trim().toLowerCase()||String(n)===s.trim());if(!found)throw new Bad('bad_value',{value:s,allowed:spec.options().map(x=>x[1]).join(', ')});v=found[0];}else if(!s.trim())v=Object.hasOwn(spec,'blank')?spec.blank:spec.type==='hex'||spec.type==='int'?0:'';else if(spec.type==='hex'){if(!/^(?:0x|\$)?[0-9A-F]{1,3}$/i.test(s.trim()))throw new Bad('bad_value',{value:s,allowed:'hexadecimal NAC'});v=parseInt(s.trim().replace(/^(0x|\$)/i,''),16);}else if(spec.type==='int')v=asInt(spec.min,spec.max,spec.blank)(s);else v=s;if(spec.exclude?.includes(v))throw new Bad('bad_value',{value:s,allowed:'a non-reserved value'});r.params={...r.params,[spec.key]:v};},
+            }))),
+            {header:'Channel Radio ID',aliases:[],key:'p25Id',get:r=>r.kind===2?r.dmrId||'':'',set:(r,s)=>{if(r.kind===2)r.dmrId=asInt(0,0xFFFFFE,0)(s)}},
 			c("RX Frequency (MHz)", "rxHz", asFreq(), (r) => mhz(r.rxHz), ["RX Frequency", "RX Freq", "Receive Frequency", "RX"]),
 			c("TX Frequency (MHz)", "txHz", asFreq(), (r) => mhz(r.txHz), ["TX Frequency", "TX Freq", "Transmit Frequency", "TX"]),
 			c("Power", "power", asWord(POWER, 0, 0, 10), (r) => powerText(r.power), ["TX Power"]),
@@ -318,10 +323,11 @@ export const TABLES = {
 			ref("RX Group List", "rxList", "rxLists", ["Group List", "RX List"]),
 			ref("APRS", "aprs", "aprs", ["APRS Configuration"]),
 			c("DMR ID", "dmrId", asId, (r) => r.dmrId || "", ["Channel DMR ID"]),
-			c("RX Only", "rxOnly", asBool, (r) => yesNo(r.rxOnly)),
+			{header:"RX Only",key:"rxOnly",aliases:[],get:r=>yesNo(r.kind?!r.tagTx:r.rxOnly),set:(r,s)=>{const on=asBool(s);if(r.kind){r.tagTx=!on;r.rxOnly=true;}else r.rxOnly=on;}},
 			c("All Skip", "allSkip", asBool, (r) => yesNo(r.allSkip), ["Scan Skip"]),
 			c("Zone Skip", "zoneSkip", asBool, (r) => yesNo(r.zoneSkip)),
 			c("VOX", "vox", asBool, (r) => yesNo(r.vox)),
+			c("Tone Burst", "toneBurst", asBool, (r) => yesNo(r.toneBurst), ["1750 Hz"]),
 			c("No Beep", "noBeep", asBool, (r) => yesNo(r.noBeep)),
 			c("No Eco", "noEco", asBool, (r) => yesNo(r.noEco)),
 			c("DMO", "dmo", asBool, (r) => yesNo(r.dmo)),
@@ -375,6 +381,7 @@ function coordText(x) {
 // --- Export ---
 
 export function exportTable(m, table) {
+ if(table==="channels"&&m.channels.some(c=>c.kind&&KINDS.find(k=>k.id===c.kind)?.module.systemType))throw new Bad("mode_system_export");
 	const spec = TABLES[table];
 	return stringify([spec.columns.map((x) => x.header), ...m[table].map((r) => spec.columns.map((x) => x.get(r, m)))]);
 }

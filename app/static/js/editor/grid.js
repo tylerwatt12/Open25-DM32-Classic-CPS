@@ -26,13 +26,14 @@ function pencil() {
 // A column: {key, label, type: "text" | "number" | "select" | "bool", get(row), set(row, value) -> error string or
 // undefined, format(value), options(row) -> [[value, label]], width, readOnly}
 export class Grid {
-	constructor({ columns, rows, onChange, onSelect, onOpen, t, empty = "" }) {
-		Object.assign(this, { columns, rows, onChange, onSelect, onOpen, t, empty });
+	constructor({ columns, rows, onChange, onSelect, onOpen, onPaste, t, empty = "" }) {
+		Object.assign(this, { columns, rows, onChange, onSelect, onOpen, onPaste, t, empty });
 		this.filter = "";
 		this.sort = null;	// {key, dir}
 		this.selected = new Set();
-		this.focus = { row: 0, col: 0 };
-		this.el = h("div", { class: "grid-wrap" });
+		this.focus = { row: 0, col: Math.max(0,columns.findIndex(c=>c.key==="name")) };
+        this.anchor={...this.focus};
+		this.el = h("div", { class: "grid-wrap",tabindex:0 });
 		this.table = h("table", { class: "grid", role: "grid" });
 		this.el.append(this.table);
 		this.table.addEventListener("keydown", (e) => this.key(e));
@@ -42,8 +43,15 @@ export class Grid {
 		});
 		this.table.addEventListener("click", (e) => {
 			const td = e.target.closest("td[data-col]");
-			if (td && !td.querySelector("input, select")) this.moveTo(Number(td.parentNode.dataset.i), Number(td.dataset.col));
+			if(!td&&!this.view.length)this.el.focus();
+			if (td && !td.querySelector("input, select")) this.moveTo(Number(td.parentNode.dataset.i), Number(td.dataset.col),e.shiftKey);
 		});
+
+        this.table.addEventListener('pointerdown',e=>{const td=e.target.closest('td[data-col]');if(!td||e.target.closest('input,select,button'))return;this.dragging=true;this.moveTo(+td.parentNode.dataset.i,+td.dataset.col,e.shiftKey)});
+        this.table.addEventListener('pointerover',e=>{const td=e.target.closest('td[data-col]');if(this.dragging&&e.buttons===1&&td)this.moveTo(+td.parentNode.dataset.i,+td.dataset.col,true)});
+        document.addEventListener('pointerup',()=>{this.dragging=false});
+        this.table.addEventListener('copy',e=>{if(e.target.closest('input,select'))return;e.preventDefault();e.clipboardData.setData('text/plain',this.copyText())});
+        this.el.addEventListener('paste',e=>{if(e.target.closest('input,select')||!this.onPaste)return;e.preventDefault();const target=e.target.closest('td[data-col]');if(target)this.focus={row:+target.parentNode.dataset.i,col:+target.dataset.col};const data=e.clipboardData.getData('text/plain').replace(/\r/g,'').replace(/\n$/,'').split('\n').map(r=>r.split('\t'));const error=this.onPaste(data,this.focus);if(error){const td=this.cell(error.row??this.focus.row,error.col??this.focus.col);td?.classList.add('invalid');if(td)td.title=error.error;return;}this.render();});
 		this.render();
 	}
 
@@ -127,6 +135,7 @@ export class Grid {
 		const cell = this.cell(this.focus.row, this.focus.col);
 		if (cell) cell.tabIndex = 0;
 		else this.cell(0, 0)?.setAttribute("tabindex", "0");
+        this.paintRange();
 	}
 
 	sortBy(key) {
@@ -160,11 +169,13 @@ export class Grid {
 		return this.table.querySelector(`tr[data-i="${i}"] td[data-col="${j}"]`);
 	}
 
-	moveTo(i, j) {
+	moveTo(i, j, extend=false) {
 		i = Math.max(0, Math.min(this.view.length - 1, i));
 		j = Math.max(0, Math.min(this.columns.length - 1, j));
 		this.cell(this.focus.row, this.focus.col)?.setAttribute("tabindex", "-1");
 		this.focus = { row: i, col: j };
+        if(!extend)this.anchor={...this.focus};
+        this.paintRange();
 		const td = this.cell(i, j);
 		if (td) {
 			td.tabIndex = 0;
@@ -185,7 +196,7 @@ export class Grid {
 		const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1], PageUp: [-15, 0], PageDown: [15, 0] };
 		if (moves[e.key]) {
 			e.preventDefault();
-			this.moveTo(i + moves[e.key][0], j + moves[e.key][1]);
+			this.moveTo(i + moves[e.key][0], j + moves[e.key][1],e.shiftKey);
 		} else if (e.key === "Enter" || e.key === "F2") {
 			e.preventDefault();
 			this.edit(td);
@@ -198,6 +209,11 @@ export class Grid {
 			e.preventDefault();
 		}
 	}
+
+
+    range(){const a=this.anchor??this.focus,b=this.focus;return {top:Math.min(a.row,b.row),bottom:Math.max(a.row,b.row),left:Math.min(a.col,b.col),right:Math.max(a.col,b.col)}}
+    paintRange(){const r=this.range();for(const td of this.table.querySelectorAll('td[data-col]')){const i=+td.parentNode.dataset.i,j=+td.dataset.col;td.classList.toggle('in-range',i>=r.top&&i<=r.bottom&&j>=r.left&&j<=r.right);}}
+    copyText(){const r=this.range(),rows=[];for(let i=r.top;i<=r.bottom;i++){if(!this.view[i])continue;const cells=[];for(let j=r.left;j<=r.right;j++)cells.push(this.text(this.columns[j],this.view[i]));rows.push(cells.join('\t'));}return rows.join('\n');}
 
 	edit(td, typed = null) {
 		const j = Number(td.dataset.col), i = Number(td.parentNode.dataset.i);

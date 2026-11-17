@@ -10,7 +10,7 @@
 // 0x700000 on the DM-32UV) on the wire. Writes send only changed bytes inside the codeplug's regions, never whole
 // sectors: a sector the codeplug shares with the radio's own settings (0x6000) keeps them.
 
-import { CodeplugImage, REGIONS, IDDB_HEADER, CODEPLUG_SPAN } from "./image.js";
+import { CodeplugImage, EDITOR_REGIONS, SETTINGS_CONTINUATIONS, IDDB_HEADER, CODEPLUG_SPAN } from "./image.js";
 import { readHeader, extent, AREA1, AREA1_SIZE, AREA2 } from "./iddb.js";
 import { GENERAL, BOOT_TEXT } from "./records.js";
 import { Link, probe, whyNoAnswer } from "../flasher/link.js";
@@ -18,6 +18,7 @@ import { crc32, sleep } from "../flasher/bytes.js";
 import { encodeBlock } from "../flasher/lz4.js";
 import { FastLink, FastError, BLOCK, REASON } from "./fastlink.js";
 import { note } from "../diag.js";
+import {decodeArea,KV_ADDR,KV_SIZE,KV_CONTINUATIONS} from "./kv.js";
 
 export class TransportError extends Error {
 	constructor(code, params = {}) {
@@ -49,9 +50,10 @@ export function keepIdentity(want, have) {
 }
 
 // Regions of the codeplug a write may change
-export function writeRanges() {
+export function writeRanges(bytes = null) {
 	const out = [];
-	for (const [a, b] of REGIONS) {
+	for (const [a, b] of EDITOR_REGIONS) {
+        if(a===SETTINGS_CONTINUATIONS[0])continue;
 		let s = a;
 		for (const [ka, kb] of KEEP_OUT) {
 			if (ka >= s && ka < b) {
@@ -61,6 +63,7 @@ export function writeRanges() {
 		}
 		if (s < b) out.push([s, b]);
 	}
+	if(bytes)for(const page of decodeArea(bytes).sectors??[])if(page.offset!==KV_ADDR)out.push([page.offset,page.offset+KV_SIZE]);
 	return out;
 }
 
@@ -117,6 +120,8 @@ export function changes(want, have, ranges, gap = 16) {
 	return [...sectors.entries()].sort((x, y) => x[0] - y[0]);
 }
 
+const rootLast=(x,y)=>x[0]===KV_ADDR?1:y[0]===KV_ADDR?-1:x[0]-y[0];
+
 // --- Over the radio's codeplug interface ---
 
 export class CpsSerial {
@@ -148,7 +153,8 @@ export class CpsSerial {
 			throw new TransportError(why.kind === "openfw" ? "openfw" : why.kind === "other" ? "not_rfoundry"
 				: this.cable ? "no_answer_cable" : "no_answer", why);
 		}
-        if(!/^open25-classic-/i.test(String(p.git||"")))throw new TransportError("not_classic");
+		if (!/^open25-classic-/i.test(String(p.git || ""))) throw new TransportError("not_classic");
+        if(p.version?.codeplug!=="rfkv1"||p.version?.codeplug_chain!=="1")throw new TransportError("codeplug_migration_firmware");
 		const radio = radios.find((r) => r.codeplug?.names?.some((n) => n.toLowerCase() === String(p.board || "").toLowerCase()));
 		if (!radio) throw new TransportError("unknown_radio", { board: p.board || "?" });
 		this.radio = radio;
@@ -215,7 +221,7 @@ export class CpsSerial {
 	// The database's header first, so the progress covers the whole read, database too
 	async cpsRead({ iddb, progress, signal }) {
 		const img = await this.cpsGet(CodeplugImage.from(new Uint8Array(0)), [IDDB_HEADER], { signal });
-		return this.cpsGet(img, [...REGIONS, ...(iddb ? this.iddbRest(img) : [])], { signal, progress });
+		return this.cpsGet(img, [...EDITOR_REGIONS, ...(iddb ? this.iddbRest(img) : [])], { signal, progress });
 	}
 
 	cpsReadIddb(img, { progress, signal }) {
@@ -266,9 +272,9 @@ export class CpsSerial {
 	}
 
 	cpsPlan(want, have, { iddb = false } = {}) {
-		const plan = changes(want.bytes, have?.bytes ?? null, writeRanges());
+		const plan = changes(want.bytes, have?.bytes ?? null, writeRanges(want.bytes));
 		if (iddb) plan.push(...changes(want.bytes, null, iddbRanges(want)));
-		plan.sort((x, y) => x[0] - y[0]);
+		plan.sort(rootLast);
 		const bytes = plan.reduce((n, [, runs]) => n + runs.reduce((m, [, d]) => m + d.length, 0), 0);
 		return { plan, bytes };
 	}
@@ -324,6 +330,7 @@ export class CpsSerial {
 		}
 		let done = 0;
 		for (const [sector, runs] of order) {
+            if(sector===KV_ADDR){const pages=order.filter(([a])=>KV_CONTINUATIONS.includes(a));if(pages.length)await this.verify(want,pages);}
 			if (signal?.aborted) throw new TransportError("stopped");
 			await this.writeSector(sector, runs);
 			done += runs.reduce((m, [, d]) => m + d.length, 0);
@@ -393,7 +400,7 @@ export class CpsSerial {
 	// Whole blocks of the database after its header's block (read whole with the header), and with regions the
 	// codeplug's too, in one pass
 	async fastReadIddb(img, { cache, progress, signal, regions = false, iddb = true }) {
-		const ranges = blocksOf([...(regions ? REGIONS : []), ...(iddb ? this.iddbRest(img) : [])])
+		const ranges = blocksOf([...(regions ? EDITOR_REGIONS : []), ...(iddb ? this.iddbRest(img) : [])])
 			.filter(([a]) => a < IDDB_HEADER[0] || a >= IDDB_HEADER[0] + BLOCK).map(([a]) => [a, a + BLOCK]);
 		await this.fastBlocks(img, ranges, { cache, progress, signal, total: ranges.length * BLOCK });
 		return img;
@@ -418,10 +425,11 @@ export class CpsSerial {
 	}
 
 	async fastPlan(want, have, { iddb = false } = {}) {
-		const cp = writeRanges(), db = iddb ? iddbRanges(want) : [];
+		const cp = writeRanges(want.bytes), db = iddb ? iddbRanges(want) : [];
 		want.ensure(Math.max(...[...cp, ...db].map(([, b]) => b)));
 		const sums = await this.fastSums(blocksOf([...cp, ...db]).map(([a]) => a));
 		const codeplug = await this.fastChanged(want, have, cp, sums);
+        codeplug.sort(rootLast);
 		const ids = iddb ? await this.fastChanged(want, have, db, sums) : [];
 		// the database's header block: rewritten first erased and again last whenever any of it changes (iddb-compact.md
 		// 4.3), so a write cut short leaves no database rather than a mix
@@ -453,7 +461,7 @@ export class CpsSerial {
 		}
 		// a block the fast protocol refuses (outside what it serves on this radio) goes through the CPS
 		for (const a of refused) {
-			const runs = changes(want.bytes, null, writeRanges().filter(([x, y]) => x < a + BLOCK && y > a)
+			const runs = changes(want.bytes, null, writeRanges(want.bytes).filter(([x, y]) => x < a + BLOCK && y > a)
 				.map(([x, y]) => [Math.max(x, a), Math.min(y, a + BLOCK)]));
 			for (const [sector, r] of runs) await this.writeSector(sector, r);
 		}
@@ -464,6 +472,7 @@ export class CpsSerial {
 		await this.fl.begin(staged);
 		try {
 			for (const [a, b] of blocks) {
+                if(a===KV_ADDR&&!staged){const pages=blocks.filter(([offset])=>KV_CONTINUATIONS.includes(offset));if(pages.length){const sums=await this.fastSums(pages.map(([offset])=>offset).sort((x,y)=>x-y));for(const [offset,data]of pages)if(sums.get(offset)?.crc!==crc32(data))throw new TransportError('verify_failed',{addr:offset});}}
 				if (signal?.aborted) throw new TransportError("stopped");
 				try {
 					await this.fl.write(a, b);

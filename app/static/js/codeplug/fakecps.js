@@ -16,8 +16,9 @@ export class FakeCpsRadio {
 	// INFO region byte instead of ours or foreign (0: a map whose flash didn't start). radioInfo: area 9
 	// answered, with the chip's size (core/cps/cps_openfw.c)
 	constructor({ board = "DM-1701", base = 0, end = 0xE00000, size = 0x1000000, image = null, cable = false, foreign = false, uid = 0x11,
-		features = "FM,DMR", git = "open25-classic-0.1.0-rc1-r8", release = null, gitTime = 0, noMap = false, radioInfo = false, region = null } = {}) {
-		Object.assign(this, { board, base, end, cable, foreign, uid, features, git, release, gitTime, noMap, radioInfo, region });
+		features = "FM,DMR", git = "open25-classic-codeplug-standard", release = null, gitTime = 0, noMap = false, radioInfo = false, region = null,
+		codeplug = "rfkv1", codeplugChain = "1" } = {}) {
+		Object.assign(this, { board, base, end, cable, foreign, uid, features, git, release, gitTime, noMap, radioInfo, region, codeplug, codeplugChain });
 		this.spi = new Uint8Array(size).fill(0xFF);
 		if (image) this.spi.set(image.subarray(0, Math.min(image.length, end - base)), base);
 		this.writes = [];		// [addr, length] of every X 2
@@ -36,7 +37,7 @@ export class FakeCpsRadio {
 		if (req[0] === 0xA5) {
 			const f = parseFrames(req)[0];
 			if (f?.cmd === 0x02) {
-				const text = `proto=1\ngit=${this.git}\n${this.gitTime ? `git_time=${this.gitTime}\n` : ""}${this.release ? `release=${this.release}\n` : ""}board=${this.board}\nfeatures=${this.features}\ncodec=present\n`;
+				const text = `proto=1\ngit=${this.git}\n${this.gitTime ? `git_time=${this.gitTime}\n` : ""}${this.release ? `release=${this.release}\n` : ""}board=${this.board}\n${this.codeplug ? `codeplug=${this.codeplug}\n` : ""}${this.codeplugChain ? `codeplug_chain=${this.codeplugChain}\n` : ""}features=${this.features}\ncodec=present\n`;
 				return frame(0x82, f.seq, concat(new Uint8Array([0]), new TextEncoder().encode(text)));
 			}
 			const ok = (...b) => frame(f.cmd | 0x80, f.seq, new Uint8Array([0, ...b]));

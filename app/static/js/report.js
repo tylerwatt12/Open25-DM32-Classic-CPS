@@ -233,7 +233,7 @@ export function reportDialog() {
 	const d = h("dialog", { class: "confirm report-dialog", "aria-labelledby": "report-title" });
 	const save = button(t("report.download"), async () => {
 		const { files } = await bundle(text.value, picked());
-		download(`open25-classic-cps-report-${diag.report().tool || "web"}-${stamp()}.zip`, await zip(files), "application/zip");
+		download(`rfoundry-bug-report-${diag.report().tool || "web"}-${stamp()}.zip`, await zip(files), "application/zip");
 		result.replaceChildren(h("p", { class: "notice ok" }, t("report.downloaded")));
 	}, { primary: !sentry && !backend });
 	// the project's backend: the report and the checked files, the user's message and address if given

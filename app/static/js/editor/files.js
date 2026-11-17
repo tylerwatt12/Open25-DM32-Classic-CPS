@@ -14,6 +14,7 @@ import { classify } from "../codeplug/detect.js";
 import { importStock, STOCK, RDT_MD380 } from "../codeplug/stock_tyt.js";
 import { DM32_STOCK, importStock as importDm32 } from "../codeplug/stock_baofeng.js";
 import { empty, encode } from "../codeplug/model.js";
+import { LIMITS, CH_SIZE, bankBitmap, channelAddr, decodeChannel, VFO } from "../codeplug/records.js";
 
 // code: the editor.err.* text; params: what the file was, for the error report (never its contents)
 export class FileError extends Error {
@@ -35,7 +36,19 @@ const idDbTop = extent;
 
 export function imageFrom(bytes) {
 	const keep = Math.max(CODEPLUG_SPAN, Math.min(bytes.length, idDbTop(bytes)));
-	return CodeplugImage.from(bytes.subarray(0, Math.min(bytes.length, keep)));
+	const image = CodeplugImage.from(bytes.subarray(0, Math.min(bytes.length, keep)));
+	// RFKV modes use ordinary upstream FM/DMR base records. Retired Open25
+	// discriminators are unsupported input, never reinterpreted or converted.
+	const records = [...VFO];
+	for (let n = 1; n <= LIMITS.channels; n++) {
+		const bit = (n - 1) % 128, bank = Math.floor((n - 1) / 128);
+		if (image.bytes[bankBitmap(bank) + (bit >> 3)] & (1 << (bit & 7))) records.push(channelAddr(n));
+	}
+	for (const at of records) {
+		const record = image.bytes.subarray(at, at + CH_SIZE);
+		if (decodeChannel(record) && record[0x18] !== 0 && record[0x18] !== 1) throw new FileError("rfkv_required");
+	}
+	return image;
 }
 
 // What a codeplug image or SPI flash dump holds, as openFile returns it:
@@ -98,6 +111,16 @@ export function saveBytes(image) {
 	return image.bytes.subarray(0, Math.max(CODEPLUG_SPAN, idDbTop(image.bytes)));
 }
 
+// A saved file's name without its extension: the codeplug's name and the local date and time, name-YYYY-MM-DD-HHMM, so
+// saves taken over time sort and never collide. A name that already ends in one (a dated file, loaded again) gets
+// the new one in its place
+const DATED = /-\d{4}-\d{2}-\d{2}-\d{4}$/;
+export function datedName(name, when = new Date()) {
+	const p = (n) => String(n).padStart(2, "0");
+	const stamp = `${when.getFullYear()}-${p(when.getMonth() + 1)}-${p(when.getDate())}-${p(when.getHours())}${p(when.getMinutes())}`;
+	return `${(name || "codeplug").replace(DATED, "") || "codeplug"}-${stamp}`;
+}
+
 // codeplug.bin for the radio's TFTP server (USB network mode, docs/spec/tftp.md 5.2): the codeplug, and the ID database
 // in its image layout when there is one, so one file carries both. The radio takes the database part only when the
 // client announces the file's size, and only format N below the radio's openfw_end: a format C database goes in the
@@ -115,7 +138,7 @@ export { recordSize };
 
 // --- The draft: the working codeplug kept in this browser (IndexedDB), so a reload doesn't lose edits ---
 
-const DB = "open25-dm32-classic-cps", STORE = "draft";
+const DB = "open25-dm32-classic-cps-rfkv1", STORE = "draft";
 
 function db() {
 	return new Promise((resolve, reject) => {
