@@ -51,7 +51,7 @@ const freq = (t) => (r, k, v) => {
 // frequency left from before)
 const rxFreq = (t) => (r, k, v) => {
 	const err = freq(t)(r, k, v);
-	if (!err && listenBand(r.rxHz)) {
+	if (!err && r.profile!=="classic-r14" && listenBand(r.rxHz)) {
 		r.rxOnly = true;
 		r.txHz = r.rxHz;
 	}
@@ -61,8 +61,8 @@ const listening = (value) => !!listenBand(parseFreq(value("rxHz")));
 
 // The mode as the radio shows it: an FM channel in the air band is received in AM
 // A channel of a kind (channel-modes.md): the kind's short name
-const modeText = (r, t) => (r.kind ? kindName(r.kind) : r.mode === "dmr" ? "DMR" : listenBand(r.rxHz) ? t(`editor.mode.${listenBand(r.rxHz)}`) : "FM");
-const kindMod = (r) => (r.kind ? kindRow(r.kind)?.module ?? null : null);
+const modeText = (r, t) => (r.kind ? kindName(r.kind) : r.mode === "dmr" ? "DMR" : r.profile!=="classic-r14"&&listenBand(r.rxHz) ? t(`editor.mode.${listenBand(r.rxHz)}`) : "FM");
+const kindMod = (r) => (r.kind ? kindRow(r.kind,r.profile)?.module ?? null : null);
 // A channel of a kind keeps the record's fields its module lists (a talk target, a unit ID); the rest of FM and DMR
 // stays as stored and is not shown
 const recordField = (r, key) => {const fields=kindMod(r)?.recordFields;return !r.kind||!!(typeof fields==='function'?fields(r):fields)?.includes(key)};
@@ -75,7 +75,7 @@ export const rxOnlySet = (r, v) => (r.kind ? (r.tagTx = !v) : (r.rxOnly = !!v));
 export const CLASSIC_TX_GUARD = true;
 export const effectiveTx = c => c.dmo || !c.txHz ? c.rxHz : c.txHz;
 export const outsideAmateur = c => {const hz=effectiveTx(c);return !(hz>=144e6&&hz<=148e6||hz>=420e6&&hz<=450e6)};
-export function txDefault(beforeHz,c,fresh=false){if(CLASSIC_TX_GUARD&&outsideAmateur(c)&&(fresh||beforeHz!==effectiveTx(c)))rxOnlySet(c,true)}
+export function txDefault(beforeHz,c,fresh=false){if(c.profile!=="classic-r14"&&CLASSIC_TX_GUARD&&outsideAmateur(c)&&(fresh||beforeHz!==effectiveTx(c)))rxOnlySet(c,true)}
 
 const tone = (t) => (r, k, v) => {
 	const s = parseTone(v);
@@ -176,7 +176,7 @@ export function columns(table, m, t, {features=null,keyMask=null} = {}) {
 			}, { format: mhz, numeric: true })),
 			own(col("txHz", "editor.col.tx", "text", freq(t), { format: mhz, numeric: true })),
 			col("power", "editor.col.power", "select", pick, { options: () => powerOptions(t) }),
- ...(kinds.some(k=>k.module.systemType)?[{key:"system",label:t("editor.modes.system"),type:"select",get:r=>r.system,readOnly:r=>!kindRow(r.kind)?.module.systemType,options:r=>systemOptions(m,t,kindRow(r.kind)?.module.systemType,r.system),set:(r,v)=>r.system=v,format:(v,r)=>kindRow(r.kind)?.module.systemType?(v?.name??(v?`#${v}`:"")):""}]:[]),
+ ...(kinds.some(k=>k.module.systemType)?[{key:"system",label:t("editor.modes.system"),type:"select",get:r=>r.system,readOnly:r=>!kindRow(r.kind,r.profile)?.module.systemType,options:r=>systemOptions(m,t,kindRow(r.kind,r.profile)?.module.systemType,r.system),set:(r,v)=>r.system=v,format:(v,r)=>kindRow(r.kind,r.profile)?.module.systemType?(v?.name??(v?`#${v}`:"")):""}]:[]),
  ...modeColumns,
 			only("fm", col("bw", "editor.col.bw", "select", pick, { options: () => [[12.5, "12.5"], [25, "25"]] })),
 			only("fm", col("rxTone", "editor.col.rx_tone", "text", tone(t), { format: (v) => toneText(v, t), editValue: (v) => v })),
@@ -281,7 +281,7 @@ export function systemOptions(m, t, type, current) {
 // features: the connected radio's (null: none), which says the kinds a channel may be made
 export function channelForm(m, t, { features = null,keyMask=null,onRxOnlyOff=()=>{} } = {}) {
  let priorTx;
- const defaultRxOnly=CLASSIC_TX_GUARD?(work,value,event)=>{if(event?.type==='input')return false;const rx=parseFreq(value('rxHz')),raw=value('txHz'),tx=raw===''?0:parseFreq(raw);if(rx==null||tx==null)return false;const c={...work,rxHz:rx,txHz:tx,dmo:value('dmo')},hz=effectiveTx(c),changed=priorTx!=null&&hz!==priorTx;priorTx=hz;return changed&&outsideAmateur(c)}:null;
+ const defaultRxOnly=m.profile!=="classic-r14"&&CLASSIC_TX_GUARD?(work,value,event)=>{if(event?.type==='input')return false;const rx=parseFreq(value('rxHz')),raw=value('txHz'),tx=raw===''?0:parseFreq(raw);if(rx==null||tx==null)return false;const c={...work,rxHz:rx,txHz:tx,dmo:value('dmo')},hz=effectiveTx(c),changed=priorTx!=null&&hz!==priorTx;priorTx=hz;return changed&&outsideAmateur(c)}:null;
 	const sel = (key, label, options, extra = {}) => ({ key, label: t(label), type: "select", options, ...extra });
 	const chk = (key, label) => ({ key, label: t(label), type: "bool" });
 	const txt = (key, label, parse, format) => ({ key, label: t(label), type: "text", parse, format });
@@ -322,19 +322,19 @@ export function channelForm(m, t, { features = null,keyMask=null,onRxOnlyOff=()=
 		{ type: "note", key: "kindNote", text: (value, w) => (w?.kind && !ownFreqs(w) ? t("editor.modes.freqs_system") : "") },
 		sel("power", "editor.col.power", () => powerOptions(t)),
 		// in a receive-only band TX follows RX, locked (rxFreq)
-		{ type: "pair", key: "freqs", show: ownFreqs, disabled: (w, value) => listening(value),
-			fields: [txt("rxHz", "editor.col.rx", rxFreq(t), mhz), { ...txt("txHz", "editor.col.tx", freq(t), mhz), disabled: (w, value) => listening(value), follows: "rxHz" }], buttons: [
+		{ type: "pair", key: "freqs", show: ownFreqs, disabled: (w, value) => m.profile!=="classic-r14"&&listening(value),
+			fields: [txt("rxHz", "editor.col.rx", rxFreq(t), mhz), { ...txt("txHz", "editor.col.tx", freq(t), mhz), disabled: (w, value) => m.profile!=="classic-r14"&&listening(value), follows: "rxHz" }], buttons: [
 			["→", t("editor.freq.rx_to_tx"), ([rx]) => [rx, rx]],
 			["⇄", t("editor.freq.swap"), ([rx, tx]) => [tx, rx]],
 			["←", t("editor.freq.tx_to_rx"), ([, tx]) => [tx, tx]],
 		] },
 		{ type: "note", key: "band", text: (value) => {
-			const band = listenBand(parseFreq(value("rxHz")));
+			const band = m.profile==="classic-r14"?null:listenBand(parseFreq(value("rxHz")));
 			return band ? t(`editor.band.${band}`) : "";
 		} },
 		txt("tot", "editor.col.tot", tot(t), (v) => (v ? String(v) : t("editor.tot.default"))),
 		// a receive-only band makes the channel RX only on save (rxFreq): the box shows it as the RX frequency is typed
-		{ ...chk("rxOnly", "editor.col.rx_only"), implied: listening,defaultWhen:defaultRxOnly, get: rxOnlyGet, set:(r,v)=>{if(rxOnlyGet(r)&&!v)onRxOnlyOff();rxOnlySet(r,v)} },
+		{ ...chk("rxOnly", "editor.col.rx_only"), implied: m.profile==="classic-r14"?()=>false:listening,defaultWhen:defaultRxOnly, get: rxOnlyGet, set:(r,v)=>{if(rxOnlyGet(r)&&!v)onRxOnlyOff();rxOnlySet(r,v)} },
 		{ group: t("editor.form.mode_params"), show: (r) => !!r.kind },
 		...kindFields,
 		fm({ group: t("editor.form.analog") }),

@@ -17,7 +17,7 @@ function snapshot(m) {
 		for (const r of tables[t]) objects.set(r, copy(r));
 	}
 	for (const v of m.vfo) if (v) objects.set(v, copy(v));
-	return { tables, objects, general: { ...m.general }, modeSettings: { ...m.modeSettings }, base: m.base, iddb: m.iddb };
+	return { profile:m.profile, tables, objects, general: { ...m.general }, modeSettings: { ...m.modeSettings }, base: m.base, iddb: m.iddb };
 }
 
 function copy(r) {
@@ -27,6 +27,7 @@ function copy(r) {
 }
 
 function restore(m, s) {
+ m.profile=s.profile;
 	for (const t of TABLES) m[t] = s.tables[t].slice();
 	for (const [obj, c] of s.objects) {
 		for (const k of Object.keys(obj)) if (!(k in c)) delete obj[k];

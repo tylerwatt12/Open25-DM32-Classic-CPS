@@ -67,5 +67,13 @@
     "tests/stock_baofeng.test.mjs": "1a8f1c717cd50397bcb1662dfefc2d7a6cf450e82a6c65fc194a6bca32e3330e",
     "tests/qdmr.test.mjs": "32e25c2ecddf0a282f3b2a324ba87dc8826ac362b549faf26d00e0c5f51b8a91"
   },
-  "local_changes": "Edition identity/storage; appended P25 option fields and generic development records; RFKV continuations; literal TX NAC presence; spreadsheet interactions. See FORMAT.md. Next implementation is not a source input. Classic r10 outside-amateur-band RX-only editing defaults and explicit TX confirmation. Classic r11 tests the firmware VERSION response for P25 capability advertisement."
+  "local_changes": "Edition identity/storage; appended P25 option fields and generic development records; RFKV continuations; literal TX NAC presence; spreadsheet interactions. See FORMAT.md. Next implementation is not a source input. Classic r10 outside-amateur-band RX-only editing defaults and explicit TX confirmation. Classic r11 tests the firmware VERSION response for P25 capability advertisement. Classic r14 adds an explicit native one-sector/contact-owned profile; keeps the r9\u2013r13 model and drafts; only native profile removes the earlier RX-only editing defaults. Native transport refuses incompatible legacy programming instead of converting it.",
+  "native_additions": {
+    "repository": "https://github.com/RadioFoundry/RadioFoundry",
+    "commit": "f2e232028838a4f23ee88f7fc89dc376d574562c",
+    "original_files_sha256": {
+      "static/js/codeplug/mode_nxdn.js": "2d173c03ef3499e7665b3568e95b7bbfa4cff51938d27982c76185f0547e5738"
+    },
+    "native_reference": "RadioFoundry core/p25/p25_codeplug.c and core/nxdn/nxdn_codeplug.c, with the Classic native-format guard; no Next source input."
+  }
 }

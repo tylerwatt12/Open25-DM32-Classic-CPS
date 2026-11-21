@@ -7,6 +7,7 @@
 // the image it came from and touches only records whose fields changed, so an unedited codeplug round-trips byte for
 // byte.
 
+import {isNative,nativeIssue,nativeTxAllowed,nativeRxAllowed} from './profiles.js';
 import { CodeplugImage } from "./image.js";
 import {
 	LIMITS, CH_SIZE, bankBitmap, channelAddr, decodeChannel, encodeChannel, zoneLayout, decodeZone, encodeZone,
@@ -23,9 +24,10 @@ import {decodeDevelopment,encodeDevelopment,validateDevelopment} from "./develop
 
 const REFS = ["contact", "rxList", "aprs"];
 
-export function decode(image) {
+export function decode(image, {profile="classic-r13"} = {}) {
 	const b = image.bytes;
 	const m = {
+		profile,
 		general: decodeGeneral(b),
 		channels: [], vfo: [], zones: [], contacts: [], rxLists: [], dtmfContacts: [], aprs: [], systems: [],
 		iddb: readHeader(b),
@@ -72,8 +74,8 @@ export function decode(image) {
 	return m;
 }
 
-export function empty() {
-	return decode(CodeplugImage.blank());
+export function empty(options) {
+	return decode(CodeplugImage.blank(),options);
 }
 
 // The names of the channels an image stores, by number
@@ -237,6 +239,7 @@ export function encode(m) {
 	// the modes' records after the records they name (channel-modes.md 2.4: the record first, then its tag)
 	encodeModes(m, b, () => channelNames(m.base.bytes));
 	encodeDevelopment(m,b);
+ if(isNative(m.profile)&&(decodeArea(m.base.bytes).sectors?.length??0)<=1&&(decodeArea(b).sectors?.length??0)>1)throw new RangeError('Classic r14 settings must fit one sector');
 	fixLucz(b, m);
 	return img;
 }
@@ -309,7 +312,12 @@ export function validate(m, { bands = null, features = null,limits=null } = {}) 
 	const err = (table, item, field, code, params = {}) => out.push({ level: "error", table, item, field, code, params });
 	const warn = (table, item, field, code, params = {}) => out.push({ level: "warning", table, item, field, code, params });
 	validateDevelopment(m,err);
-	const g = m.general;
+	if(isNative(m.profile)) {
+  const issue=m.base&&nativeIssue(m.base.bytes);
+  if(issue)err('systems',null,null,issue);
+  for(const c of m.channels)if((c.kind?c.tagTx:!c.rxOnly)&&!nativeTxAllowed(c))warn('channels',c,'txHz','native_tx_policy');
+ }
+ const g = m.general;
 	if (!g.dmrId) warn("general", null, "dmrId", "no_dmr_id");
 	else if (g.dmrId > 0xFFFFFF) err("general", null, "dmrId", "id_range");
 	if (g.radioName.length > LIMITS.radioName) err("general", null, "radioName", "too_long", { max: LIMITS.radioName });
@@ -330,14 +338,14 @@ export function validate(m, { bands = null, features = null,limits=null } = {}) 
 		if (c.name.length > LIMITS.name) err("channels", c, "name", "too_long", { max: LIMITS.name });
 		for (const f of ["rxHz", "txHz"]) {
 			if (!(c[f] > 0 && c[f] < 1e9)) err("channels", c, f, "bad_freq");
-			else if (bands && !bands.some(([lo, hi]) => c[f] >= lo && c[f] <= hi)) warn("channels", c, f, "out_of_band");
+			else if (isNative(m.profile)?(f==="rxHz"&&!nativeRxAllowed(c[f])):(bands && !bands.some(([lo, hi]) => c[f] >= lo && c[f] <= hi))) warn("channels", c, f, "out_of_band");
 		}
 		for (const f of ["rxTone", "txTone"]) if (parseTone(c[f]) === null) err("channels", c, f, "bad_tone");
 		if (c.colorCode < 0 || c.colorCode > 15) err("channels", c, "colorCode", "range", { min: 0, max: 15 });
 		if (c.mode === "dmr" && !c.kind && !c.contact && !c.rxOnly) warn("channels", c, "contact", "no_contact");
-		const band = listenBand(c.rxHz);
+		const band = isNative(m.profile)?null:listenBand(c.rxHz);
 		if (band && c.mode === "dmr") warn("channels", c, "mode", `listen_dmr_${band}`);
-		const txBand = listenBand(c.txHz);
+		const txBand = isNative(m.profile)?null:listenBand(c.txHz);
 		if (txBand && !c.rxOnly) warn("channels", c, "rxOnly", `listen_tx_${txBand}`);
 		for (const k of REFS) if (typeof c[k] === "number") warn("channels", c, k, "dangling", { number: c[k] });
 		if (c.dmrId > 0xFFFFFF) err("channels", c, "dmrId", "id_range");

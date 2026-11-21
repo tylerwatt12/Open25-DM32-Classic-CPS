@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "python3 tools/prepare_tests.py && node --test tests/*.test.mjs",
+    "test": "python3 tools/prepare_tests.py && python3 tools/prepare_native_tests.py && node --test tests/*.test.mjs",
     "start": "python3 tools/serve.py",
     "test:browser": "playwright test",
     "build": "python3 tools/build.py",
     "prepare:tests": "python3 tools/prepare_tests.py --fetch",
     "verify": "python3 tools/verify_release.py",
-    "package": "python3 tools/package.py"
+    "package": "python3 tools/package.py",
+    "prepare:native": "python3 tools/prepare_native_tests.py"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1"

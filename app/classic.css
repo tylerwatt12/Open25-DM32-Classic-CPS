@@ -15,3 +15,5 @@
 .grid td[data-col] { user-select:none; }
 .grid td.editing input, .grid td.editing select { user-select:text; }
 .grid td.c-ro { background:var(--surface-2); color:var(--muted); }
+
+.ed-toolbar select { min-height:2.4rem; padding:.4rem .6rem; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); font:inherit; }

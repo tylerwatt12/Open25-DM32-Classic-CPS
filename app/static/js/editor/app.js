@@ -4,6 +4,7 @@
 // written back to the radio. Everything runs in the page; the codeplug never leaves it unless the user puts it in a
 // bug report (report.js). The working codeplug is kept in this browser (IndexedDB) so a reload doesn't lose edits.
 
+import {NATIVE,LEGACY,PROFILES} from '../codeplug/profiles.js';
 import { h, t, ROOT, HOME, button, notice, download, progressBar, num as fmtNum, date as fmtDate } from "../flasher/dom.js";
 import { equal } from "../flasher/bytes.js";
 import { SerialStream, serialSupported, serialApi, RFOUNDRY_USB, browserErrorKey, knownRadioPort } from "../flasher/link.js";
@@ -61,6 +62,7 @@ const messages = h("div", { class: "ed-messages", "aria-live": "polite" });
 
 function load(model, name, { fromRadio = false } = {}) {
 	S.model = model;
+ S.grid=null;
 	S.fileName = name;
 	S.history.reset();
 	S.dirty = false;
@@ -88,7 +90,7 @@ function change(label, fn) {
 // Every edit remains staged until the existing confirmation accepts the complete change.
 function channelChange(label,enable,commit){
  const go=()=>change(label,commit);
- if(!CLASSIC_TX_GUARD||!enable.length)return go();
+ if(S.model.profile===NATIVE||!CLASSIC_TX_GUARD||!enable.length)return go();
  const freqs=[...new Set(enable.map(effectiveTx))],shown=freqs.slice(0,3).map(mhz).join(', ')+(freqs.length>3?'…':'')+' MHz';
  confirmDialog(t('editor.tx_outside',{frequencies:shown}),t('editor.enable_tx'),go,{cancel:t('editor.keep_rx_only'),primary:false});
 }
@@ -98,7 +100,7 @@ function draftSoon() {
 	clearTimeout(draftTimer);
 	draftTimer = setTimeout(() => {
 		try {
-			saveDraft({ bytes: saveBytes(encode(S.model)), name: S.fileName, dirty: S.dirty, at: new Date().toISOString() });
+			saveDraft({ bytes: saveBytes(encode(S.model)), name: S.fileName, dirty: S.dirty, profile:S.model.profile, at: new Date().toISOString() });
 		} catch {
 			// an invalid model can't be encoded yet; the next change saves it
 		}
@@ -128,7 +130,7 @@ function problems() {
 
 // The connected radio's firmware features (its probe), which say the channel modes it runs; null without a radio
 function features() {
-	return S.conn ? S.conn.probe?.features ?? "" : "FM,DMR,P25";
+	return S.conn ? S.conn.probe?.features ?? "" : S.model?.profile===NATIVE?"FM,DMR,P25,NXDN":"FM,DMR,P25";
 }
 
 function refresh() {
@@ -171,9 +173,14 @@ function renderToolbar(errors) {
 		input.value = "";
 		if (f) await openPicked(f.name, new Uint8Array(await f.arrayBuffer()));
 	} });
-	toolbar.replaceChildren(
+	const profile=h('select',{'aria-label':'Firmware profile',disabled:!!S.conn,onchange:()=>{
+  const target=profile.value,dirty=S.dirty;
+  load(decode(encode(S.model),{profile:target}),S.fileName);
+  S.dirty=dirty;refresh();draftSoon();
+ }} ,...PROFILES.map(([value,label])=>h('option',{value,selected:S.model.profile===value},label)));
+ toolbar.replaceChildren(
 		h("div", { class: "ed-group" },
-			button(t("editor.new"), newCodeplug),
+			profile, button(t("editor.new"), newCodeplug),
 			button(t("editor.open"), () => input.click()), input,
 			save),
 		h("div", { class: "ed-group" },
@@ -271,7 +278,7 @@ function blank(tab) {
 		return `${base} ${i}`;
 	};
 	switch (tab) {
-	case "channels": {const c=newChannel({ name: n(t("editor.new.channel")) });txDefault(null,c,true);return c;}
+	case "channels": {const c=newChannel({ name: n(t("editor.new.channel")),profile:S.model.profile });txDefault(null,c,true);return c;}
 	case "contacts": return newContact({ name: n(t("editor.new.contact")), id: 9 });
 	case "scanLists":return {number:null,name:n(t("editor.new.scan")),talkback:true,channels:[]};
  case "idenSets":return {number:null,name:n(t("editor.new.iden")),rows:Array.from({length:16},()=>({baseHz:0,stepHz:0,txOffsetHz:0}))};
@@ -490,11 +497,11 @@ async function openPicked(name, bytes) {
 	try {
 		const f = await openFile(name, bytes);
 		if (f.kind === "image") {
-			load(decode(f.image), name.replace(/\.[^.]+$/, ""));
+			load(decode(f.image,{profile:S.model.profile}), name.replace(/\.[^.]+$/, ""));
 			say(t("editor.opened", { name }), "ok");
 		} else if (f.kind === "converted") {
 			// another firmware's codeplug (a stock radio's backup, say): converted, never shown as raw bytes
-			load(decode(f.image), name.replace(/\.[^.]+$/, ""));
+			load(decode(f.image,{profile:S.model.profile}), name.replace(/\.[^.]+$/, ""));
 			const c = f.counts;
 			diag.note("codeplug converted", { from: f.from, ...c, notes: f.notes });
 			say(t("editor.converted", { name, format: t(`editor.format.${f.from}`), channels: c.channels, zones: c.zones, contacts: c.contacts, rxLists: c.rxLists }),
@@ -547,7 +554,7 @@ function saveImage(kind, img) {
 
 function newCodeplug() {
 	const go = () => {
-		load(empty(), "codeplug");
+		load(empty({profile:S.model?.profile??NATIVE}), "codeplug");
 		clearDraft();
 	};
 	if (S.dirty) confirmDialog(t("editor.new_confirm"), t("editor.new"), go);
@@ -571,7 +578,8 @@ async function connect() {
 		const hash = location.hash;
 		S.fake = S.fake || new FakeCpsRadio({ board: "DM-32UV", base:0x700000,end:0xF00000, image: CodeplugImage.blank().bytes, foreign: hash === "#sim-foreign",
 			// #sim-modes: firmware that runs every channel mode the editor knows (modes.js)
-			features: hash.startsWith("#sim-compact") ? "FM,DMR,P25,IDDB_COMPACT" : hash.startsWith("#sim-modes") ? "FM,DMR,DMR_TRUNK,P25,P25_TRUNK" : "FM,DMR,P25", release: hash.match(/[#&]release=([\w.]+)/)?.[1],
+			...(hash.startsWith('#sim-native')?{git:'open25-classic-0.1.0-rc1-r14',codeplug:null,codeplugChain:null}:{}),
+			features: hash.startsWith('#sim-native')?'FM,DMR,P25,NXDN,CPS_FAST':hash.startsWith("#sim-compact") ? "FM,DMR,P25,IDDB_COMPACT" : hash.startsWith("#sim-modes") ? "FM,DMR,DMR_TRUNK,P25,P25_TRUNK" : "FM,DMR,P25", release: hash.match(/[#&]release=([\w.]+)/)?.[1],
 			gitTime: Number(hash.match(/[#&]git_time=(\d+)/)?.[1]) || 0 });
 		stream = S.fake.stream();
 	} else {
@@ -823,7 +831,7 @@ async function readRadio() {
 				// the model without the database (its header erased): a write leaves the radio's as it is
 				img.bytes.fill(0xFF, IDDB_HEADER[0], IDDB_HEADER[1]);
 			}
-			load(decode(img), `${c.radio.id}-codeplug`, { fromRadio: true });
+			load(decode(img,{profile:c.transport.profile}), `${c.radio.id}-codeplug`, { fromRadio: true });
 			c.dbKnown = !db || readDb;
 			S.iddbSkipped = db && !readDb ? { count: db.count, bytes: dbBytes, seconds } : null;
 			if (S.iddbSkipped) refresh();
@@ -901,6 +909,7 @@ async function planWrite() {
 		const c = await connect();
 		if (!c) return;
 		stage = "prepare radio";
+        if(c.transport.profile!==S.model.profile)throw new TransportError("profile_mismatch");
 		if (!await ensureStorage(c)) return;
 		stage = "encode codeplug";
 		const file = encode(S.model);
@@ -1139,11 +1148,11 @@ async function start() {
 	}
 	const draft = await loadDraft();
 	if (draft?.bytes) {
-		load(decode(imageFrom(draft.bytes)), draft.name || "codeplug");
+		load(decode(imageFrom(draft.bytes),{profile:draft.profile??LEGACY}), draft.name || "codeplug");
 		S.dirty = !!draft.dirty;
 		refresh();
 		say(t("editor.draft_restored", { time: fmtDate(new Date(draft.at), { dateStyle: "medium", timeStyle: "short" }) }), "info");
-	} else load(empty(), "codeplug");
+	} else load(empty({profile:S.model?.profile??NATIVE}), "codeplug");
 	if (!serialSupported() && !S.sim) say(t("editor.no_serial"), "info");
 	if (S.sim) say(t("editor.sim"), "info");
 }

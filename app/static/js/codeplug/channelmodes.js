@@ -17,7 +17,7 @@
 
 import { decodeArea, getValue, setValue, deleteValue, dedupe, putArea, KV_ADDR, KV_SIZE, KV_HDR, KV_BANKS, KEYS } from "./kv.js";
 import { getName, putName } from "./fields.js";
-import { KINDS, kindRow, typeRow, radioRuns } from "./modes.js";
+import { kindsFor, kindRow, typeRow, radioRuns } from "./modes.js";
 import { u16, u32, put16, put32, sameBytes, sameValue, nameCheck } from "./modebytes.js";
 
 export const MODE_KEY = { system: 0x0100, entry: 0x0200, secret: 0x0300, tag: 0x0400, setting: 0x0A00 };
@@ -131,9 +131,10 @@ export function decodeModes(m, b) {
 	}
 	for (const c of m.channels) {
 		c.kind = 0;
+		c.profile=m.profile;
 		const raw = getValue(entries, MODE_KEY.tag + c.number - 1), t = decodeTag(raw);
 		if (!tagLive(t, c)) continue;
-		const mod = kindRow(t.kind)?.module;
+		const mod = kindRow(t.kind,m.profile)?.module;
 		Object.assign(c, {
 			kind: t.kind, system: t.system === 0xFF ? null : find(m.systems, t.system + 1), tagTx: (t.flags & TAG.tx) !== 0,
 			baseOwn: (t.flags & TAG.baseOwn) !== 0, fallback: null, params: mod ? mod.decode(t.params) : null, tagRaw: raw,
@@ -150,7 +151,7 @@ export function decodeModes(m, b) {
 		delete s.fbChan;
 		delete s.fbCheck;
 	}
-	for (const k of KINDS) {
+	for (const k of kindsFor(m.profile)) {
 		const set = k.module.settings;
 		if (set) m.modeSettings[k.id] = set.decode(getValue(entries, MODE_KEY.setting + k.id));
 	}
@@ -163,7 +164,7 @@ export function decodeModes(m, b) {
 export function standIn(m, c) {
 	if (!c.kind || c.baseOwn) return {};
 	const out = { mode: "dmr", rxOnly: true };
-	const mod = kindRow(c.kind)?.module;
+	const mod = kindRow(c.kind,m.profile)?.module;
 	if (mod && mod.ownFreqs === false && c.system && typeof c.system === "object") {
 		const ctl = c.system.entries.find((e) => e.cls === 0 && e.control && e.rxHz);
 		if (ctl) Object.assign(out, { rxHz: ctl.rxHz, txHz: ctl.txHz || ctl.rxHz });
@@ -173,17 +174,18 @@ export function standIn(m, c) {
 
 // Every channel of a kind brought to its record
 export function syncModes(m) {
-	for (const c of m.channels) if (c.kind) Object.assign(c, standIn(m, c),kindRow(c.kind)?.module.channelDefaults??{});
+	for (const c of m.channels) {c.profile=m.profile;if (c.kind) Object.assign(c, standIn(m, c),kindRow(c.kind,m.profile)?.module.channelDefaults??{});}
 }
 
 // Channel c made kind (0: plain, mode "fm" or "dmr"). Fields of the kind it had are dropped; transmit allowed carries
 // over as the record's receive-only bit and back
 export function setKind(m, c, kind, mode = "dmr") {
+ c.profile=m.profile;
 	if (!kind) {
 		if (c.kind) {
 			// a kind without frequencies of its own left its system's in the record: never a place to transmit (as
 			// removeModes)
-			c.rxOnly = !c.tagTx || (!c.baseOwn && kindRow(c.kind)?.module.ownFreqs === false);
+			c.rxOnly = !c.tagTx || (!c.baseOwn && kindRow(c.kind,m.profile)?.module.ownFreqs === false);
 			Object.assign(c, { system: null, tagTx: false, baseOwn: false, fallback: null, params: null, tagRaw: null });
 		}
 		c.kind = 0;
@@ -191,7 +193,7 @@ export function setKind(m, c, kind, mode = "dmr") {
 		return;
 	}
 	if (c.kind === kind) return;
-	const mod = kindRow(kind).module;
+	const mod = kindRow(kind,m.profile).module;
 	const tx = c.kind ? c.tagTx : !c.rxOnly;
 	setKind(m, c, 0);
 	Object.assign(c, { kind, system: null, tagTx: mod.defaultTx && tx, baseOwn: false, fallback: null, params: mod.newParams(), tagRaw: null });
@@ -326,7 +328,7 @@ export function modeEntries(m, entries, baseNames = () => new Map()) {
 		const prev = getValue(out, key), here = decodeTag(prev), read = decodeTag(c.tagRaw);
 		// the tag the channel came with: the one at its number, else the one it had where it was read
 		const src = here && here.kind === c.kind ? here : read && read.kind === c.kind ? read : null;
-		const mod = kindRow(c.kind)?.module;
+		const mod = kindRow(c.kind,m.profile)?.module;
 		let params = src ? src.params : new Uint8Array(0);
 		if (mod && !(src && sameValue(mod.decode(src.params), c.params))) params = mod.encode(c.params, src?.params ?? null);
 		let flags = (src ? src.flags & (0xF0 | TAG.reserved) : 0) | (c.tagTx ? TAG.tx : 0) | (c.baseOwn ? TAG.baseOwn : 0);
@@ -338,7 +340,7 @@ export function modeEntries(m, entries, baseNames = () => new Map()) {
 	}
 
 	// The kinds' radio-wide records: written when a field changed; none when the module says so
-	for (const k of KINDS) {
+	for (const k of kindsFor(m.profile)) {
 		const st = k.module.settings, s = m.modeSettings?.[k.id];
 		if (!st || !s) continue;
 		const key = MODE_KEY.setting + k.id, prev = getValue(out, key);
@@ -357,7 +359,7 @@ export function encodeModes(m, b, baseNames) {
 	if (area.state === "newer") return;
 	const entries = area.state === "valid" ? dedupe(area.entries) : [];
 	const out = modeEntries(m, entries, baseNames);
-	if (out !== entries) putArea(b, out);
+	if (out !== entries) putArea(b, out,{maxSectors:m.profile==="classic-r14"?1:17});
 }
 
 // The octets the area's entries would take with the model written (the general settings' keys too), and the most it
@@ -368,7 +370,7 @@ export function modeAreaUse(m, b, baseNames) {
 	let out = modeEntries(m, entries, baseNames);
 	for (const row of KEYS) if (m.general?.[row.name] != null && !getValue(out, row.key)) out = [...out, { key: row.key, value: new Uint8Array(row.size) }];
 	const hdr = area.state === "valid" ? b[KV_ADDR + 5] : KV_HDR;
-	return { used: out.reduce((n, e) => n + 4 + e.value.length, 0), max: (KV_SIZE-hdr)*(1+(KV_BANKS[1]-KV_BANKS[0])/KV_SIZE) };
+	return { used: out.reduce((n, e) => n + 4 + e.value.length, 0), max: (KV_SIZE-hdr)*(m.profile==="classic-r14"?1:1+(KV_BANKS[1]-KV_BANKS[0])/KV_SIZE) };
 }
 
 // --- Editing ---
@@ -422,7 +424,7 @@ export function validateModes(m, err, warn, { features = null,limits=null, baseN
 	}
 	for (const c of m.channels) {
 		if (!c.kind) continue;
-		const row = kindRow(c.kind);
+		const row = kindRow(c.kind,m.profile);
         if(row&&features!=null)for(const spec of row.module.fields())if(spec.feature&&!String(features).split(",").includes(spec.feature)&&!sameValue(c.params?.[spec.key],row.module.newParams()[spec.key]))err("channels",c,spec.key,"mode_feature",{feature:spec.feature});
 		if (!row) {
 			warn("channels", c, "mode", "mode_kind_unknown", { kind: c.kind });
@@ -430,7 +432,7 @@ export function validateModes(m, err, warn, { features = null,limits=null, baseN
 		}
 		if (features != null && !radioRuns(features, c.kind)) warn("channels", c, "mode", "mode_not_in_radio", { mode: row.short });
 		const mod = row.module;
-		if (mod.systemType) {
+		if (mod.systemType && (!mod.optionalSystem || c.system)) {
 			if (!c.system) err("channels", c, "system", "mode_no_system");
 			else if (typeof c.system === "number") warn("channels", c, "system", "mode_system_missing", { number: c.system });
 			else if (c.system.type !== mod.systemType) err("channels", c, "system", "mode_system_type");
@@ -441,7 +443,7 @@ export function validateModes(m, err, warn, { features = null,limits=null, baseN
 		else if (c.fallback?.kind) warn("channels", c, "fallback", "mode_fallback_kind");
 		mod.validate?.(c, c.params, { err: (f, code, p = {}) => err("channels", c, f, code, p), warn: (f, code, p = {}) => warn("channels", c, f, code, p) }, { model: m, features, limits });
 	}
-	for (const k of KINDS) {
+	for (const k of kindsFor(m.profile)) {
 		const st = k.module.settings, s = m.modeSettings?.[k.id];
 		if (st && s) st.validate(s, { err: (f, code, p = {}) => err("general", null, f, code, p), warn: (f, code, p = {}) => warn("general", null, f, code, p) });
 	}

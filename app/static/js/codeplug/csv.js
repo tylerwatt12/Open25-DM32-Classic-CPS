@@ -9,7 +9,8 @@
 import { parseFreq, parseTone, mhz } from "./fields.js";
 import { LIMITS, POWER_NAMES, CALL_TYPES, validDtmf } from "./records.js";
 import { newChannel, newContact, remove, assignNumbers } from "./model.js";
-import {KINDS} from "./modes.js";
+import {KINDS,kindsFor} from "./modes.js";
+const CSV_KINDS=[...KINDS,kindsFor("classic-r14").find(k=>k.id===4)];
 import {setKind} from "./channelmodes.js";
 
 // --- RFC 4180 ---
@@ -296,12 +297,12 @@ export const TABLES = {
 		columns: [
 			NUMBER(LIMITS.channels),
 			c("Name", "name", asName(LIMITS.name), undefined, ["Channel Name", "Channel"]),
-			{header:"Mode",aliases:["Channel Mode","Channel Type","Type"],key:"mode",get:r=>r.kind?KINDS.find(k=>k.id===r.kind)?.short??`Kind ${r.kind}`:MODES[r.mode],set:(r,s,m)=>{const kind=KINDS.find(k=>k.short.toLowerCase()===s.trim().toLowerCase());if(kind)setKind(m,r,kind.id);else setKind(m,r,0,asWord(MODES,"fm")(s));}},
-            ...KINDS.flatMap(kind=>kind.module.fields().map(spec=>({
+			{header:"Mode",aliases:["Channel Mode","Channel Type","Type"],key:"mode",get:r=>r.kind?CSV_KINDS.find(k=>k.id===r.kind)?.short??`Kind ${r.kind}`:MODES[r.mode],set:(r,s,m)=>{const kind=CSV_KINDS.find(k=>k.short.toLowerCase()===s.trim().toLowerCase());if(kind)setKind(m,r,kind.id);else setKind(m,r,0,asWord(MODES,"fm")(s));}},
+            ...CSV_KINDS.flatMap(kind=>kind.module.fields().map(spec=>({
                 header:(kind.id===2?({rxNac:'RX NAC (hex)',txNac:'TX NAC (hex)',talkgroup:'Talkgroup override'})[spec.key]:null)??`${kind.short} ${spec.key.replace(/([A-Z])/g,' $1')}`,
                 key:`k${kind.id}.${spec.key}`,aliases:[],
                 get:r=>{if(r.kind!==kind.id)return '';const v=r.params?.[spec.key];if(v==null)return '';return spec.type==='hex'?v.toString(16).toUpperCase().padStart(spec.digits??1,'0'):spec.type==='bool'?yesNo(v):spec.type==='select'?spec.options().find(([n])=>n===v)?.[1]??v:String(v)},
-                set:(r,s)=>{if(r.kind!==kind.id)return;let v;if(spec.type==='bool')v=asBool(s);else if(spec.type==='select'){const found=spec.options().find(([n,label])=>String(label).toLowerCase()===s.trim().toLowerCase()||String(n)===s.trim());if(!found)throw new Bad('bad_value',{value:s,allowed:spec.options().map(x=>x[1]).join(', ')});v=found[0];}else if(!s.trim())v=Object.hasOwn(spec,'blank')?spec.blank:spec.type==='hex'||spec.type==='int'?0:'';else if(spec.type==='hex'){if(!/^(?:0x|\$)?[0-9A-F]{1,3}$/i.test(s.trim()))throw new Bad('bad_value',{value:s,allowed:'hexadecimal NAC'});v=parseInt(s.trim().replace(/^(0x|\$)/i,''),16);}else if(spec.type==='int')v=asInt(spec.min,spec.max,spec.blank)(s);else v=s;if(spec.exclude?.includes(v))throw new Bad('bad_value',{value:s,allowed:'a non-reserved value'});r.params={...r.params,[spec.key]:v};},
+                set:(r,s,m)=>{if(r.kind!==kind.id)return;if(m.profile==='classic-r14'&&kind.id===2&&!['squelch','rxNac','txNac'].includes(spec.key)){if(s.trim())throw new Bad('native_migration_required');return;}let v;if(spec.type==='bool')v=asBool(s);else if(spec.type==='select'){const found=spec.options().find(([n,label])=>String(label).toLowerCase()===s.trim().toLowerCase()||String(n)===s.trim());if(!found)throw new Bad('bad_value',{value:s,allowed:spec.options().map(x=>x[1]).join(', ')});v=found[0];}else if(!s.trim())v=Object.hasOwn(spec,'blank')?spec.blank:spec.type==='hex'||spec.type==='int'?0:'';else if(spec.type==='hex'){if(!/^(?:0x|\$)?[0-9A-F]{1,3}$/i.test(s.trim()))throw new Bad('bad_value',{value:s,allowed:'hexadecimal NAC'});v=parseInt(s.trim().replace(/^(0x|\$)/i,''),16);}else if(spec.type==='int')v=asInt(spec.min,spec.max,spec.blank)(s);else v=s;if(spec.exclude?.includes(v))throw new Bad('bad_value',{value:s,allowed:'a non-reserved value'});r.params={...r.params,[spec.key]:v};},
             }))),
             {header:'Channel Radio ID',aliases:[],key:'p25Id',get:r=>r.kind===2?r.dmrId||'':'',set:(r,s)=>{if(r.kind===2)r.dmrId=asInt(0,0xFFFFFE,0)(s)}},
 			c("RX Frequency (MHz)", "rxHz", asFreq(), (r) => mhz(r.rxHz), ["RX Frequency", "RX Freq", "Receive Frequency", "RX"]),
@@ -381,7 +382,7 @@ function coordText(x) {
 // --- Export ---
 
 export function exportTable(m, table) {
- if(table==="channels"&&m.channels.some(c=>c.kind&&KINDS.find(k=>k.id===c.kind)?.module.systemType))throw new Bad("mode_system_export");
+ if(table==="channels"&&m.channels.some(c=>c.kind&&((CSV_KINDS.find(k=>k.id===c.kind)?.module.systemType&&!CSV_KINDS.find(k=>k.id===c.kind)?.module.optionalSystem)||c.system)))throw new Bad("mode_system_export");
 	const spec = TABLES[table];
 	return stringify([spec.columns.map((x) => x.header), ...m[table].map((r) => spec.columns.map((x) => x.get(r, m)))]);
 }

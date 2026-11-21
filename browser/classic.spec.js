@@ -5,7 +5,7 @@ import {decode} from '../app/static/js/codeplug/model.js';
 import {CodeplugImage} from '../app/static/js/codeplug/image.js';
 test('create P25, validate, edit table, persist draft and reopen saved binary',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
- await page.goto('./');await expect(page.getByRole('heading',{name:'Open25-DM32 Classic CPS',exact:true})).toBeVisible();
+ await page.goto('./');await page.getByLabel('Firmware profile').selectOption('classic-r13');await expect(page.getByRole('heading',{name:'Open25-DM32 Classic CPS',exact:true})).toBeVisible();
  await expect(page.locator('html')).toHaveAttribute('data-theme','light');
  await page.getByRole('button',{name:'Add',exact:true}).click();await page.getByRole('button',{name:'Edit',exact:true}).click();
  const dlg=page.locator('dialog');await dlg.getByLabel('Name',{exact:true}).fill('P25 test');
@@ -63,7 +63,7 @@ test('retired Classic file is refused and current programming remains unchanged'
 
 test('zero P25 transmit target blocks programming before any serial-port request',async({page})=>{
  await page.addInitScript(()=>{window.serialRequests=0;navigator.serial.requestPort=async()=>{window.serialRequests++;throw new Error('Unexpected serial request')}});
- await page.goto('./');await page.getByRole('button',{name:'Add',exact:true}).click();await page.getByRole('button',{name:'Edit',exact:true}).click();
+ await page.goto('./');await page.getByLabel('Firmware profile').selectOption('classic-r13');await page.getByRole('button',{name:'Add',exact:true}).click();await page.getByRole('button',{name:'Edit',exact:true}).click();
  await page.getByLabel('Mode',{exact:true}).selectOption({label:'P25'});await page.getByLabel('Talkgroup override').fill('0');await page.getByLabel('Channel Radio ID').fill('101');await page.locator('dialog').getByRole('button',{name:'Save',exact:true}).click();
  await page.getByRole('button',{name:'Write to Radio',exact:true}).click();
  await expect(page.locator('.ed-messages')).toContainText('Correct it on the Problems tab');await expect(page.locator('.ed-view')).toContainText('For transmit');

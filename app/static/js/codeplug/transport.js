@@ -10,6 +10,7 @@
 // 0x700000 on the DM-32UV) on the wire. Writes send only changed bytes inside the codeplug's regions, never whole
 // sectors: a sector the codeplug shares with the radio's own settings (0x6000) keeps them.
 
+import {firmwareProfile,isNative,nativeIssue} from './profiles.js';
 import { CodeplugImage, EDITOR_REGIONS, SETTINGS_CONTINUATIONS, IDDB_HEADER, CODEPLUG_SPAN } from "./image.js";
 import { readHeader, extent, AREA1, AREA1_SIZE, AREA2 } from "./iddb.js";
 import { GENERAL, BOOT_TEXT } from "./records.js";
@@ -154,7 +155,8 @@ export class CpsSerial {
 				: this.cable ? "no_answer_cable" : "no_answer", why);
 		}
 		if (!/^open25-classic-/i.test(String(p.git || ""))) throw new TransportError("not_classic");
-        if(p.version?.codeplug!=="rfkv1"||p.version?.codeplug_chain!=="1")throw new TransportError("codeplug_migration_firmware");
+        this.profile=firmwareProfile(p);
+        if(!this.profile)throw new TransportError("codeplug_migration_firmware");
 		const radio = radios.find((r) => r.codeplug?.names?.some((n) => n.toLowerCase() === String(p.board || "").toLowerCase()));
 		if (!radio) throw new TransportError("unknown_radio", { board: p.board || "?" });
 		this.radio = radio;
@@ -196,7 +198,13 @@ export class CpsSerial {
 		return Math.min(cp.end - cp.base, this.fast?.end || Infinity, this.flash ? this.flash - cp.base : Infinity);
 	}
 
-	// The codeplug's regions read into a fresh image (the rest erased); with iddb, the whole ID database too. cache: an
+	get regions() {return isNative(this.profile)?EDITOR_REGIONS.filter(([a])=>a!==SETTINGS_CONTINUATIONS[0]):EDITOR_REGIONS;}
+
+ assertProgramming(image) {
+  if(isNative(this.profile)) {const issue=nativeIssue(image.bytes);if(issue)throw new TransportError(issue);}
+ }
+
+ // The codeplug's regions read into a fresh image (the rest erased); with iddb, the whole ID database too. cache: an
 	// image read before; with the fast protocol its blocks whose CRC still matches aren't read again
 	async read({ iddb = true, progress = () => {}, signal, cache = null } = {}) {
 		return this.fastOr(() => this.fastRead({ iddb, progress, signal, cache }), () => this.cpsRead({ iddb, progress, signal }));
@@ -221,7 +229,7 @@ export class CpsSerial {
 	// The database's header first, so the progress covers the whole read, database too
 	async cpsRead({ iddb, progress, signal }) {
 		const img = await this.cpsGet(CodeplugImage.from(new Uint8Array(0)), [IDDB_HEADER], { signal });
-		return this.cpsGet(img, [...EDITOR_REGIONS, ...(iddb ? this.iddbRest(img) : [])], { signal, progress });
+		return this.cpsGet(img, [...this.regions, ...(iddb ? this.iddbRest(img) : [])], { signal, progress });
 	}
 
 	cpsReadIddb(img, { progress, signal }) {
@@ -254,6 +262,7 @@ export class CpsSerial {
 	// read, trusted for a block only where its CRC matches). CPS: the codeplug's bytes that differ from have (null:
 	// everything), and with iddb the whole ID database (never read back first: it can be megabytes)
 	async plan(want, have, { iddb = false } = {}) {
+        this.assertProgramming(want);
 		return this.fastOr(() => this.fastPlan(want, have, { iddb }), () => this.cpsPlan(want, have, { iddb }));
 	}
 
@@ -272,6 +281,7 @@ export class CpsSerial {
 	}
 
 	cpsPlan(want, have, { iddb = false } = {}) {
+        this.assertProgramming(want);
 		const plan = changes(want.bytes, have?.bytes ?? null, writeRanges(want.bytes));
 		if (iddb) plan.push(...changes(want.bytes, null, iddbRanges(want)));
 		plan.sort(rootLast);
@@ -314,6 +324,7 @@ export class CpsSerial {
 
 	// Write the plan; throws when the radio refuses a sector
 	async write(want, have, { iddb = false, progress = () => {}, signal } = {}) {
+        this.assertProgramming(want);
 		if (iddb && idDbEnd(want.bytes) > this.end) throw new TransportError("iddb_too_big");
 		return this.fastOr(() => this.fastWrite(want, have, { iddb, progress, signal }), () => this.cpsWrite(want, have, { iddb, progress, signal }));
 	}
@@ -400,7 +411,7 @@ export class CpsSerial {
 	// Whole blocks of the database after its header's block (read whole with the header), and with regions the
 	// codeplug's too, in one pass
 	async fastReadIddb(img, { cache, progress, signal, regions = false, iddb = true }) {
-		const ranges = blocksOf([...(regions ? EDITOR_REGIONS : []), ...(iddb ? this.iddbRest(img) : [])])
+		const ranges = blocksOf([...(regions ? this.regions : []), ...(iddb ? this.iddbRest(img) : [])])
 			.filter(([a]) => a < IDDB_HEADER[0] || a >= IDDB_HEADER[0] + BLOCK).map(([a]) => [a, a + BLOCK]);
 		await this.fastBlocks(img, ranges, { cache, progress, signal, total: ranges.length * BLOCK });
 		return img;
@@ -425,6 +436,7 @@ export class CpsSerial {
 	}
 
 	async fastPlan(want, have, { iddb = false } = {}) {
+        this.assertProgramming(want);
 		const cp = writeRanges(want.bytes), db = iddb ? iddbRanges(want) : [];
 		want.ensure(Math.max(...[...cp, ...db].map(([, b]) => b)));
 		const sums = await this.fastSums(blocksOf([...cp, ...db]).map(([a]) => a));

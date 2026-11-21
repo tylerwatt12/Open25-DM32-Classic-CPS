@@ -11,7 +11,7 @@ page='''<!doctype html>
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Program FM, DMR and conventional P25 channels for Open25-DM32 Classic.">
+<meta name="description" content="Program FM, DMR, P25 and NXDN channels for Open25-DM32 Classic.">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://database.radioid.net https://radioid.net https://proxy.corsfix.com https://api.allorigins.win; object-src 'none'; base-uri 'none'">
 <title>Open25-DM32 Classic CPS</title>
 <link rel="icon" href="static/img/classic.svg" type="image/svg+xml">
@@ -26,8 +26,8 @@ page='''<!doctype html>
 <button id="theme-toggle" type="button" class="theme-toggle" aria-label="Switch light and dark">◐</button>
 </div></header>
 <main id="main"><section class="wrap section page-head compact">
-<h1>Open25-DM32 Classic CPS</h1><p class="lead">Program FM, DMR and conventional P25 channels for Classic.</p>
-<p class="edition-note">For <strong>Open25-DM32 Classic r9 or later</strong> on the DM-32UV. Matches the r10 and later RX-only editing defaults. Update to r11 for P25 mode selection after connecting. Recreate earlier programming after updating. For Next firmware, use <a href="../cps/">Next CPS</a>.</p>
+<h1>Open25-DM32 Classic CPS</h1><p class="lead">Program FM, DMR, P25 and NXDN channels for Classic.</p>
+<p class="edition-note">For <strong>Classic r14</strong> and <strong>Classic r9–r13</strong> on the DM-32UV. Select the matching firmware profile. Upgrade r13 through <a href="../v3/firmware.html">Flasher v3</a>, then read the radio again to use its migrated programming. Existing r13 drafts stay in the legacy profile; the CPS does not migrate them. For Next firmware, use <a href="../cps/">Next CPS</a>.</p>
 </section><section class="wrap section editor-section">
 <div id="editor" class="editor"><p class="muted">Loading editor…</p></div><noscript>Enable JavaScript to use the editor.</noscript>
 </section></main>

@@ -38,7 +38,7 @@ export function developmentEntries(m,entries){
  }
  return out;
 }
-export function encodeDevelopment(m,b){const area=decodeArea(b);if(area.state==='newer')return;const out=developmentEntries(m,area.entries);if(out!==area.entries)putArea(b,out)}
+export function encodeDevelopment(m,b){const area=decodeArea(b);if(area.state==='newer')return;const out=developmentEntries(m,area.entries);if(out!==area.entries)putArea(b,out,{maxSectors:m.profile==="classic-r14"?1:17})}
 export function validateDevelopment(m,err){
  const ids=(rows,max,table)=>{const used=new Set();for(const r of rows){if(!Number.isInteger(r.number)||r.number<1||r.number>max||used.has(r.number))err(table,r,'number','range',{min:1,max});used.add(r.number);if(!r.name||r.name.length>16)err(table,r,'name',!r.name?'no_name':'too_long',{max:16})}};
  ids(m.idenSets??[],8,'idenSets');ids(m.scanLists??[],16,'scanLists');

@@ -1,82 +1,64 @@
 # Open25-DM32 Classic CPS
 
-**Classic CPS supports Open25-DM32 Classic firmware R9 and newer.** These
-versions use RFKV programming only. Update firmware and CPS together. Earlier
-Classic programming files and browser drafts are unsupported;
-create new programming after the update. This release has no legacy-format
-reader, writer or automatic conversion path. Full-radio recovery remains a
-separate flasher operation.
+A browser codeplug editor for **Open25-DM32 Classic** on the Baofeng DM-32UV.
+The firmware profile selects the stored programming format:
 
-A standalone browser codeplug editor for **Open25-DM32 Classic** on the
-Baofeng DM-32UV. Live at https://kd8zmm.com/open25-dm32/classic-cps/.
-Next CPS remains separately hosted at `/open25-dm32/cps/`. Firmware installation
-and recovery use [Flasher v3](https://kd8zmm.com/open25-dm32/v3/firmware.html).
-The retired v1/v2 flasher entry URLs redirect to v3 and are not listed on the
-tools homepage.
+| Profile | Firmware | P25 target | RFKV settings |
+| --- | --- | --- | --- |
+| Classic r14 | r14 native | Group, private or all-call contact | One 4 KB sector |
+| Classic r9–r13 | Earlier RFKV Classic releases | Legacy direct talkgroup or contact | Existing continuation banks |
 
-This edition uses RadioFoundry revision `9e1f7209` directly: safe base channel
-records, mode/system records in RFKV and upstream raw CPS/CPS_FAST. Noncanonical
-channel records are refused before they can be interpreted or programmed.
-Standard upstream stock-device import and current CSV interchange remain
-separate editing features; retired Open25 programming is not converted.
-Continuation sectors use the upstream header continuation field and alternate
-banks so existing 1024-channel programming fits. The settings root is written
-last, after continuation integrity checks.
+New programming defaults to r14. Existing browser drafts keep the earlier
+profile unless they already saved an explicit profile. Selecting another profile
+changes how the editor presents the programming; it does **not** migrate bytes.
+Existing legacy records, unknown keys and unowned tails remain in the file.
 
-This repository owns the common editor/model/format code. Next’s copy is derived
-by `web-installer/tools/sync_cps.py`; `--check` verifies exact source and derived
-hashes in `cps/UPSTREAM-SHARED.json`. Next independently owns only its schema-5
-file importer, device-local Programming authorization and branding. Its firmware
-source is not copied into this repository. Unreleased extension assignments in
-the upstream development-key range are documented with the firmware source;
-they preserve existing scan lists, bandplans and zone links until upstream IDs
-are assigned.
+Upgrade r13 through the migration-aware
+[Flasher v3](https://kd8zmm.com/open25-dm32/v3/firmware.html), then **Read from
+Radio** before editing with the r14 profile. The flasher owns the one-time
+conversion and verified recovery file. This CPS refuses to write r13 direct-TG
+extensions or chained settings to r14. An old BIN or draft must not overwrite the
+migrated programming. Retired pre-RFKV Classic formats remain unsupported.
 
-Adapted from RadioFoundry's MIT codeplug editor at the exact revision recorded
-in `UPSTREAM.json`. Original MIT notices and author credits are retained.
-This repository has its own history, assets, deployment and browser draft store;
-it contains no Next CPS implementation.
+The hosted location is [Classic CPS](https://kd8zmm.com/open25-dm32/classic-cps/).
+Next has its own CPS. This source contains no private Next implementation.
 
 ## Programming
 
-Use Classic r9 or later and desktop Chrome or Edge for radio read/write over
-Web Serial. Turn the radio
-on normally, close other applications using its port, and choose Read from Radio.
-Read and save an original BIN before editing. This CPS accepts Classic firmware;
-it refuses a Next or unrecognized firmware identity before programming.
+Use desktop Chrome or Edge for radio read/write over Web Serial. Turn the radio
+on normally, close other applications using its port, and choose Read from
+Radio. Read and save an original BIN before editing. The connected radio selects
+its profile when read; a mismatched profile cannot be written. Unrecognized
+firmware and Next firmware are refused before programming.
 
-FM and DMR retain the original editor's fields. Conventional P25 is available in
-the Mode selector in the channel table or the pencil/edit form:
+FM and DMR retain their existing fields. Native r14 also edits conventional P25
+and NXDN 4800/9600:
 
-- **RX NAC**: hexadecimal `000`–`FFF`; `F7E` receives any NAC; `F7F` is reserved.
-- **TX NAC**: `Same as RX` or an explicit hexadecimal NAC. `000` is a valid
-  explicit NAC. `F7E` and `F7F` cannot be transmitted.
-- **Talkgroup override**: decimal 1–65535 for transmitting channels.
-- **Channel Radio ID**: decimal 1–16777214 for transmitting channels. Values
-  above 9999999 retain the upstream interoperability warning.
+- **RX NAC:** hexadecimal `000`–`FFF`; `F7E` receives any NAC; `F7F` is reserved.
+- **TX NAC:** leave blank to inherit RX, or enter an explicit hexadecimal NAC.
+  `000` is valid. Wildcard RX inherits TX NAC `293`. `F7E` and `F7F` cannot be sent.
+- **P25 TX Contact:** choose a group contact with ID 1–65535, private contact with
+  ID 1–16777214, or all-call. No contact defaults to group 1. A saved RX group
+  list may supply the first group when the TX contact is unset.
+- **Channel Radio ID:** overrides the mode-wide P25 ID, which otherwise inherits
+  the radio's DMR ID. P25 TX requires a nonzero effective ID.
+- **NXDN:** select 4800 or 9600 bit/s, RX/TX RAN and a contact. Existing system/key
+  records remain preserved; this release does not add a scrambler-key editor.
 
-P25 uses 12.5 kHz. A blank TX NAC inherits RX; with wildcard RX F7E, it uses
-TX NAC 293. Set an explicit TX NAC when a different transmit NAC is needed.
-RX-only channels may use zero talkgroup/radio ID. P25 values are independent of
-DMR contacts, RX lists and DMR IDs. Add channels to a zone for normal selection
-on the radio. This is conventional P25; no trunking configuration is provided.
+P25 uses 12.5 kHz. Add channels to a zone for normal selection. Classic r14 is
+conventional; it does not run trunked channels. The r9–r13 profile retains its
+legacy direct-TG controls and earlier RX-only editing defaults/confirmation.
+Native r14 retains saved RX-only choices without those editor defaults. Its
+firmware enforces the band policy; the CPS warns when a saved TX frequency is
+outside it. Extended RX coverage is included by the firmware.
 
-BIN preserves all mode/system records. Conventional-channel CSV preserves P25
-fields, including separate RX/TX NACs. Use BIN for systems/sites/scan/bandplan
-records that the CSV or qdmr schema cannot express. qdmr YAML export
-refuses P25 because that format cannot represent these Classic fields. Unknown
-channel formats are preserved in an unchanged BIN, flagged, and blocked from
-radio writes until corrected. Drafts stay in this browser, separate from Next.
-Contact downloads use RadioID only when requested; no codeplug is uploaded.
-
-Classic r10 adds the matching on-radio default and confirmation. In this CPS,
-new and copied channels outside 144–148 or 420–450 MHz start RX Only. Changing
-the actual TX frequency outside those bands also selects RX Only. Turning it
-off requires an explicit Enable TX confirmation; cancel keeps the whole edit
-unapplied. Existing saved/imported programming is kept, and the radio's transmit
-checks still apply; the existing P25 transmit-band restriction is unchanged.
-The effective TX frequency uses RX for talkaround or a blank TX frequency.
-There is no new stored approval flag or prompt on every PTT press.
+BIN is the preservation format for unknown records, systems, keys and future
+tails. Native settings must fit the firmware's one-sector capacity; overflow
+stops programming, rather than allocating legacy continuation sectors.
+CSV supports the existing conventional interchange. A legacy Talkgroup override
+column cannot be imported as an r14 contact. Use BIN for information CSV or qdmr
+cannot represent. Codeplug files and drafts stay in the browser. RadioID is
+contacted only when requested; no codeplug is uploaded.
 
 ## Development and validation
 
@@ -84,34 +66,34 @@ There is no new stored approval flag or prompt on every PTT press.
 npm ci
 python3 tools/build.py
 npm run prepare:tests
-npm test
+OPEN25_NATIVE_SOURCE=/path/to/matching/native-classic-source npm test
 npm run test:browser
 npm start
 ```
 
-`npm run prepare:tests` fetches Classic r11 source at
+`prepare:tests` fetches the published legacy Classic r11 source at
 `6dc8214949a521f07d9f9816040329d6f7294c16` into ignored `build/classic-source`
-and prepares the real host simulator and C encoder/decoder. Use Node22+,
-Python3.10+, Git, Make and a host C compiler; the C cross-check is tested with
-clang on macOS. No target compiler is needed for the CPS tests. Alternatively
-set `OPEN25_CLASSIC_SOURCE` to an already prepared matching RFKV-only firmware
-checkout. An old r7/r8 source checkout cannot validate this programming format.
-Host tests exercise all usable TX NACs, validation limits, CSV/BIN round trips,
-unchanged FM/DMR bytes, DMR reference isolation and simulated serial writes.
-The P25 capability regression compiles the firmware's real VERSION handler and
-shared feature list, then passes its response through the CPS parser and channel
-form/table mode choices with no existing P25 channels. The pin above includes the r11 fix for issue #27; r10
-reproduces the missing capability failure.
-Browser tests use installed Chrome (or install Chrome through Playwright).
-`CPS_URL` selects a hosted deployment for the same browser checks; `#sim` uses
-only a browser-local simulated radio. No test flashes firmware or keys RF.
+and prepares its actual host simulator/encoder. Alternatively set
+`OPEN25_CLASSIC_SOURCE` to an already prepared matching legacy source checkout.
+The native source path is separate: `prepare_native_tests.py` compiles its actual
+C codeplug, contact, P25 and NXDN owners with AddressSanitizer and
+UndefinedBehaviorSanitizer, without changing that source checkout. Its input
+hashes are recorded under ignored `build/`. No target compiler is required.
+Use Node 22+, Python 3.10+, Git, Make and clang on macOS.
+
+Tests cover all usable P25 TX NACs, native/legacy refusal, contact resolution,
+NXDN RAN/rate, unknown-tail and BIN round trips, settings capacity, simulated
+serial read/write/verify and browser profile/draft flows. The legacy VERSION
+regression compiles the firmware's real handler and feature list. `#sim-native`
+uses a browser-local native radio; `#sim` retains the legacy simulation.
+No test accesses a physical radio or transmits RF.
 
 ## Source and local packaging
 
-Source is published in [Open25-DM32-Classic-CPS](https://github.com/tylerwatt12/Open25-DM32-Classic-CPS).
-`npm run verify` checks the current release payload manifest. `npm run package`
-builds and verifies only the current Classic CPS static files into ignored
-`build/site/classic-cps/`; it refuses to overwrite an existing payload. No command
-in this source repository deploys to the website or accesses a physical radio.
-Site administration is maintained separately. Preserve LICENSE, UPSTREAM-AUTHORS
-and UPSTREAM.json with every source/static distribution.
+Source: [Open25-DM32-Classic-CPS](https://github.com/tylerwatt12/Open25-DM32-Classic-CPS).
+The common model derives from RadioFoundry's MIT editor; `UPSTREAM.json` records
+its base and the current upstream NXDN addition. Original author notices remain.
+`npm run verify` checks the reviewed static payload manifest. `npm run package`
+builds only the Classic CPS payload under ignored `build/site/classic-cps/` and
+refuses an existing output. Site deployment and publication are separate owner
+operations. Preserve LICENSE, UPSTREAM-AUTHORS and UPSTREAM.json in distributions.

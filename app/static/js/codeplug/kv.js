@@ -164,7 +164,7 @@ export function encodeArea(entries, prev = null) {
 // Write entries into an image's bytes as the area, only when the sector's bytes change. Refuses (returns false,
 // writes nothing) over an area of a newer version. True when the sector holds the entries afterwards
 const entriesEqual=(a,b)=>a.length===b.length&&a.every((e,i)=>e.key===b[i].key&&e.value.length===b[i].value.length&&e.value.every((x,j)=>x===b[i].value[j]));
-export function putArea(bytes, entries) {
+export function putArea(bytes, entries, {maxSectors=17} = {}) {
  const old=decodeArea(bytes);if(old.state==="newer")return false;
  entries=dedupe(entries);
  if(old.state==="valid"&&entriesEqual(entries,old.entries))return true;
@@ -178,7 +178,7 @@ export function putArea(bytes, entries) {
  for(const e of entries){
   const size=4+e.value.length;
   if(used+size>KV_SIZE-(previous[part]?.bytes[5]||KV_HDR)){groups.push([]);part++;used=0;}
-  if(part>16||size>KV_SIZE-(previous[part]?.bytes[5]||KV_HDR))throw new RangeError("codeplug settings area full");
+  if(part>=maxSectors||size>KV_SIZE-(previous[part]?.bytes[5]||KV_HDR))throw new RangeError("codeplug settings area full");
   groups[part].push(e);used+=size;
  }
  const offsets=groups.map((_,i)=>i?bank+(i-1)*KV_SIZE:KV_ADDR);
